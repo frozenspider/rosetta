@@ -3,21 +3,39 @@ pub mod parser;
 
 use crate::llm::{LLMBuilder, LLM};
 use crate::parser::Parser;
-use std::fs;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc::Sender;
+use std::fs;
 
-pub fn my_fn() {
-    println!("Hello, world!");
+pub fn translate(
+    input: &Path,
+    output: &Path,
+    cfg: TranslationConfig,
+    send_progress: Option<impl Fn(Progress) + Send + 'static>,
+) -> Result<(), TranslationError> {
+    Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct TranslationConfig {
-    str_lang: String,
-    dst_lang: String,
-    subject: String,
-    tone: String,
+    pub src_lang: String,
+    pub dst_lang: String,
+    pub subject: String,
+    pub tone: String,
+}
+
+impl Default for TranslationConfig {
+    fn default() -> Self {
+        TranslationConfig {
+            src_lang: "English".to_owned(),
+            dst_lang: "Spanish".to_owned(),
+            subject: "Unknown".to_owned(),
+            tone: "formal".to_owned(),
+        }
+    }
 }
 
 pub trait TranslationService {
@@ -35,6 +53,23 @@ pub enum ParseError {
     OtherError(anyhow::Error),
 }
 
+impl Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::UnsupportedFormatError { supported_formats } => {
+                write!(
+                    f,
+                    "Unsupported format. Supported formats: {:?}",
+                    supported_formats
+                )
+            }
+            ParseError::OtherError(e) => {
+                write!(f, "{}", e)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum TranslationError {
     ParseError(ParseError),
@@ -42,7 +77,31 @@ pub enum TranslationError {
     OtherError(anyhow::Error),
 }
 
+impl Display for TranslationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TranslationError::ParseError(e) => {
+                write!(f, "Parsing failed: {}", e)
+            }
+            TranslationError::IoError(e) => {
+                write!(f, "IO error: {}", e)
+            }
+            TranslationError::OtherError(e) => {
+                write!(f, "Error: {}", e)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
+pub enum TranslationStatus {
+    Started,
+    Progress(Progress),
+    Success,
+    Error(TranslationError),
+}
+
+#[derive(Debug, Clone)]
 pub struct Progress {
     pub processed_sections: usize,
     pub total_sections: usize,
