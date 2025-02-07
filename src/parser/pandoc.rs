@@ -1,4 +1,4 @@
-use super::{MarkdownSection, Parser};
+use super::{MarkdownSection, MarkdownSubsection, Parser};
 use crate::ParseError;
 
 use anyhow::anyhow;
@@ -40,6 +40,7 @@ impl Parser for PandocParser {
 
         for s in markdown.split("\n\n") {
             let mut s = s.trim();
+            let mut section = MarkdownSection::default();
             while s.len() > self.max_section_len {
                 let min_break_point = self.max_section_len / 2;
 
@@ -50,11 +51,16 @@ impl Parser for PandocParser {
                 };
 
                 let match_start = m.start() + 1; // Skip past the punctuation
-                sections.push(MarkdownSection(s[..match_start].trim().to_owned()));
+                section
+                    .0
+                    .push(MarkdownSubsection(s[..match_start].trim().to_owned()));
                 s = s[match_start..].trim();
             }
             if !s.is_empty() {
-                sections.push(MarkdownSection(s.to_owned()));
+                section.0.push(MarkdownSubsection(s.to_owned()));
+            }
+            if !section.0.is_empty() {
+                sections.push(section);
             }
         }
 
@@ -81,15 +87,19 @@ mod tests {
         let parser = PandocParser {
             max_section_len: 100,
         };
-        let input_path =
-            create_temp_file_with_content(&dir, "This is a test document. It has multiple sentences.");
+        let input_path = create_temp_file_with_content(
+            &dir,
+            "This is a test document.\nIt has multiple sentences.",
+        );
 
         let sections = parser.parse(&input_path).unwrap();
 
         assert_eq!(sections.len(), 1);
         assert_eq!(
-            sections[0].0,
-            "This is a test document. It has multiple sentences."
+            sections[0],
+            MarkdownSection(vec![MarkdownSubsection(
+                "This is a test document. It has multiple sentences.".to_owned()
+            )])
         );
     }
 
@@ -100,14 +110,41 @@ mod tests {
         let parser = PandocParser {
             max_section_len: 60,
         };
-        let input_path =
-            create_temp_file_with_content(&dir, "This is a test document, just like that. It has multiple sentences.");
+        let input_path = create_temp_file_with_content(
+            &dir,
+            "This is a test document, just like that. It has multiple sentences.",
+        );
+
+        let sections = parser.parse(&input_path).unwrap();
+
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0.len(), 2);
+        assert_eq!(
+            sections[0].0[0].0,
+            "This is a test document, just like that."
+        );
+        assert_eq!(sections[0].0[1].0, "It has multiple sentences.");
+    }
+
+    #[test]
+    fn parse_docx_file_with_multiple_sections() {
+        let dir = tempdir().unwrap();
+
+        let parser = PandocParser {
+            max_section_len: 60,
+        };
+        let input_path = create_temp_file_with_content(
+            &dir,
+            "This is a test document.\n\nIt has two sections.",
+        );
 
         let sections = parser.parse(&input_path).unwrap();
 
         assert_eq!(sections.len(), 2);
-        assert_eq!(sections[0].0, "This is a test document, just like that.");
-        assert_eq!(sections[1].0, "It has multiple sentences.");
+        assert_eq!(sections[0].0.len(), 1);
+        assert_eq!(sections[0].0[0].0, "This is a test document.");
+        assert_eq!(sections[1].0.len(), 1);
+        assert_eq!(sections[1].0[0].0, "It has two sections.");
     }
 
     #[test]
@@ -117,7 +154,8 @@ mod tests {
         let parser = PandocParser {
             max_section_len: 10,
         };
-        let input_path = create_temp_file_with_content(&dir, "Thisisaverylongwordwithoutbreakpoints.");
+        let input_path =
+            create_temp_file_with_content(&dir, "Thisisaverylongwordwithoutbreakpoints.");
 
         let result = parser.parse(&input_path);
 
