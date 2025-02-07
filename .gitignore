@@ -1,0 +1,18 @@
+# OS
+.DS_Store
+
+# IDEA
+*.iml
+.idea/
+
+# Eclipse
+.project
+.settings/
+
+# Rust/Cargo
+/target
+
+# Application
+application.conf
+
+*.log
