@@ -10,5 +10,5 @@ pub trait LLMBuilder {
 }
 
 pub trait LLM {
-    fn translate(&self, section: MarkdownSection) -> Result<String, TranslationError>;
+    fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, TranslationError>;
 }

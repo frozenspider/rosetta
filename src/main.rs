@@ -74,36 +74,29 @@ impl eframe::App for TranslationGui {
                 if btn.clicked() {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                         self.input_path = Some(path.display().to_string());
-                        if self.output_path.is_empty() {
-                            let new_file_name = "".to_owned()
-                                + path.file_stem().unwrap().to_string_lossy().as_str()
-                                + "_translated."
-                                + path.extension().unwrap().to_string_lossy().as_str();
-                            self.output_path = path
-                                .parent()
-                                .unwrap()
-                                .join(new_file_name)
-                                .display()
-                                .to_string();
-                        }
+                        let new_file_name = "".to_owned()
+                            + path.file_stem().unwrap().to_string_lossy().as_str()
+                            + "_translated."
+                            + path.extension().unwrap().to_string_lossy().as_str();
+                        self.output_path = path
+                            .parent()
+                            .unwrap()
+                            .join(new_file_name)
+                            .display()
+                            .to_string();
                     }
                 }
             });
 
             ui.horizontal(|ui| {
-                let btn = ui
-                    .button("Select output file")
+                let label = ui
+                    .label("Output file:")
                     .on_hover_text("Browse for output file");
 
+                let mut text_edit = self.output_path.as_str();
                 let text_edit =
-                    TextEdit::singleline(&mut self.output_path).desired_width(f32::INFINITY);
-                ui.add(text_edit).labelled_by(btn.id);
-
-                if btn.clicked() {
-                    if let Some(path) = rfd::FileDialog::new().save_file() {
-                        self.input_path = Some(path.display().to_string());
-                    }
-                }
+                    TextEdit::singleline(&mut text_edit).desired_width(f32::INFINITY);
+                ui.add(text_edit).labelled_by(label.id);
             });
 
             ui.horizontal(|ui| {

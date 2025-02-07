@@ -1,5 +1,5 @@
 use super::{LLMBuilder, LLM};
-use crate::parser::MarkdownSection;
+use crate::parser::{MarkdownSection, MarkdownSubsection};
 use crate::{TranslationConfig, TranslationError};
 
 pub struct DummyLLMBuilder;
@@ -15,7 +15,7 @@ impl LLMBuilder for DummyLLMBuilder {
 pub struct DummyLLM;
 
 impl LLM for DummyLLM {
-    fn translate(&self, _section: MarkdownSection) -> Result<String, TranslationError> {
-        Ok("Dummy output".to_owned())
+    fn translate(&self, _section: MarkdownSection) -> Result<MarkdownSection, TranslationError> {
+        Ok(MarkdownSection(vec![MarkdownSubsection("Dummy output".to_owned())]))
     }
 }

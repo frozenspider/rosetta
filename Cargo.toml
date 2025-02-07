@@ -4,16 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.95"
-
 # UI
 eframe = "0.31.0"
 rfd = "0.15.2"
 env_logger = "0.11.6"
 
-# Markdown
+# Text processing
 pandoc = "0.8.11"
+regex = "1.11.1"
 
 # File system
 tempfile = "3.16.0"
-regex = "1.11.1"
+
+# Other
+anyhow = "1.0.95"
+itertools = "0.12.1"

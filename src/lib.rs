@@ -1,12 +1,12 @@
+pub mod generator;
 pub mod llm;
 pub mod parser;
 
+use crate::generator::{Generator, GeneratorBuilder};
 use crate::llm::{LLMBuilder, LLM};
 use crate::parser::Parser;
 use std::fmt::Display;
 use std::fs;
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 pub fn translate(
@@ -21,11 +21,15 @@ pub fn translate(
 
     let llm_builder = llm::dummy::DummyLLMBuilder;
 
+    let generator_builder = generator::pandoc::PandocGeneratorBuilder;
+
     let translator = LlmTranslationService {
         parser,
         llm_builder,
+        generator_builder,
         send_progress,
     };
+
     translator.translate(input, output, cfg)
 }
 
@@ -117,16 +121,18 @@ pub struct Progress {
     pub total_sections: usize,
 }
 
-pub struct LlmTranslationService<P, LB, SP> {
+pub struct LlmTranslationService<P, LB, GB, SP> {
     parser: P,
     llm_builder: LB,
+    generator_builder: GB,
     send_progress: Option<SP>,
 }
 
-impl<P, LB, SP> TranslationService for LlmTranslationService<P, LB, SP>
+impl<P, LB, GB, SP> TranslationService for LlmTranslationService<P, LB, GB, SP>
 where
     P: Parser,
     LB: LLMBuilder,
+    GB: GeneratorBuilder,
     SP: Fn(Progress) + Send + 'static,
 {
     fn translate(
@@ -147,7 +153,6 @@ where
                 format!("File already exists: {:?}", output),
             )));
         }
-        let mut out = File::create(output).map_err(|err| TranslationError::IoError(err))?;
 
         fs::create_dir_all(output.parent().expect("output parent"))
             .map_err(|err| TranslationError::IoError(err))?;
@@ -163,11 +168,14 @@ where
             .build(cfg)
             .map_err(|err| TranslationError::OtherError(err))?;
 
+        let mut gen = self.generator_builder.build(
+            output,
+        )?;
+
         for (current, section) in input_sections.into_iter().enumerate() {
             let translated_section = llm.translate(section)?;
 
-            out.write_all(translated_section.as_bytes())
-                .map_err(|err| TranslationError::IoError(err))?;
+            gen.write(translated_section)?;
 
             if let Some(send_progress) = self.send_progress.as_ref() {
                 send_progress(Progress {
@@ -176,6 +184,8 @@ where
                 });
             }
         }
+
+        gen.finalize()?;
 
         Ok(())
     }
