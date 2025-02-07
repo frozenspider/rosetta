@@ -3,7 +3,7 @@ use eframe::{egui, Frame};
 use rosetta::*;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
+use std::{panic, thread};
 
 fn main() {
     // TODO: Config
@@ -154,7 +154,7 @@ impl eframe::App for TranslationGui {
                         ("Done!".to_owned(), Some(Color32::DARK_GREEN))
                     }
                     Some(TranslationStatus::Error(ref error)) => {
-                        (format!("Error: {}", error), Some(Color32::RED))
+                        (format!("{}", error), Some(Color32::RED))
                     }
                     None => ("".to_owned(), None),
                 };
@@ -178,17 +178,29 @@ impl eframe::App for TranslationGui {
                         tx.send(TranslationStatus::Started).unwrap();
 
                         let tx2 = tx.clone();
-                        if let Err(failure) = translate(
-                            Path::new(&input_path),
-                            Path::new(&output_path),
-                            cfg,
-                            Some(move |progress| {
-                                tx2.send(TranslationStatus::Progress(progress)).unwrap();
-                            }),
-                        ) {
-                            tx.send(TranslationStatus::Error(failure)).unwrap();
-                        } else {
-                            tx.send(TranslationStatus::Success).unwrap();
+                        let translation_res = panic::catch_unwind(|| {
+                            translate(
+                                Path::new(&input_path),
+                                Path::new(&output_path),
+                                cfg,
+                                Some(move |progress| {
+                                    tx2.send(TranslationStatus::Progress(progress)).unwrap();
+                                }),
+                            )
+                        });
+                        match translation_res {
+                            Ok(Ok(())) => {
+                                tx.send(TranslationStatus::Success).unwrap();
+                            }
+                            Ok(Err(failure)) => {
+                                tx.send(TranslationStatus::Error(failure)).unwrap();
+                            }
+                            Err(_) => {
+                                tx.send(TranslationStatus::Error(TranslationError::OtherError(
+                                    anyhow::anyhow!("Crash!"),
+                                )))
+                                .unwrap();
+                            }
                         }
                     }));
                 };

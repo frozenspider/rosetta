@@ -1,8 +1,11 @@
-use crate::ParseError;
-use std::path::Path;
+pub mod pandoc;
 
-pub type Section = String;
+use std::path::Path;
+use super::ParseError;
+
+#[derive(Debug, Clone)]
+pub struct MarkdownSection(String);
 
 pub trait Parser {
-    fn parse(&self, input: &Path) -> Result<Vec<Section>, ParseError>;
+    fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError>;
 }

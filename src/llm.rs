@@ -1,4 +1,7 @@
-use crate::{TranslationConfig, TranslationError};
+pub mod dummy;
+
+use super::{TranslationConfig, TranslationError};
+use super::parser::MarkdownSection;
 
 pub trait LLMBuilder {
     type Built: LLM;
@@ -7,5 +10,5 @@ pub trait LLMBuilder {
 }
 
 pub trait LLM {
-    fn translate(&self, section: String) -> Result<String, TranslationError>;
+    fn translate(&self, section: MarkdownSection) -> Result<String, TranslationError>;
 }
