@@ -1,16 +1,18 @@
 use super::{LLMBuilder, LLM};
 use crate::parser::{MarkdownSection, MarkdownSubsection};
 use crate::{LLMError, TranslationConfig};
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{
     AssistantObject, AssistantsApiResponseFormatOption, CreateAssistantRequest,
     CreateMessageRequest, CreateMessageRequestContent, CreateRunRequest, CreateThreadRequest,
     LastError, LastErrorCode, MessageContent, MessageRole, ModifyAssistantRequest, ResponseFormat,
-    RunStatus, ThreadObject,
+    RunObject, RunStatus, ThreadObject,
 };
 use async_openai::Client;
+use backoff::backoff::Backoff;
+use backoff::ExponentialBackoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -19,7 +21,7 @@ use std::error::Error;
 const ASSISTANT_NAME: &str = "rosetta-translator";
 const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 
-const SLEEP_TIME_MS: u64 = 2000;
+const SLEEP_TIME_MS: u64 = 2 * 1000;
 
 pub struct OpenAiGPTBuilder {
     api_key: String,
@@ -170,76 +172,14 @@ impl LLM for OpenAiGPT {
                     .await?
             };
 
-            let runs_api = self.client.threads();
-            let runs_api = runs_api.runs(&self.thread.id);
-
             let mut run_req = CreateRunRequest::default();
             run_req.assistant_id = self.assistant.id.clone();
-            let mut run = runs_api.create(run_req).await?;
-            loop {
-                run = runs_api.retrieve(&run.id).await?;
-                match (run.status, run.last_error) {
-                    (RunStatus::Completed, _) => {
-                        log::info!("Run complete");
-                        break;
-                    }
-                    (
-                        _,
-                        Some(LastError {
-                            code: LastErrorCode::RateLimitExceeded,
-                            ..
-                        }),
-                    ) => {
-                        log::warn!("Hit the rate limit");
-                        tokio::time::sleep(std::time::Duration::from_millis(SLEEP_TIME_MS * 3))
-                            .await;
-                    }
-                    (RunStatus::Queued | RunStatus::InProgress, _) => { /* NOOP */ }
-                    (RunStatus::Cancelling | RunStatus::Cancelled, _) => {
-                        return Err(LLMError::InteractionError(anyhow!("Run is cancelled!")))
-                    }
-                    (
-                        RunStatus::Failed,
-                        Some(LastError {
-                            code: LastErrorCode::InvalidPrompt,
-                            message,
-                        }),
-                    ) => {
-                        return Err(LLMError::InteractionError(anyhow!(
-                            "Invalid prompt: {message}"
-                        )))
-                    }
-                    (
-                        RunStatus::Failed,
-                        Some(LastError {
-                            code: LastErrorCode::ServerError,
-                            message,
-                        }),
-                    ) => {
-                        return Err(LLMError::InteractionError(anyhow!(
-                            "Server error: {message}"
-                        )));
-                    }
-                    (RunStatus::Failed, None) => {
-                        return Err(LLMError::InteractionError(anyhow!(
-                            "Run failed with no error"
-                        )));
-                    }
-                    (RunStatus::Incomplete, _) => {
-                        return Err(LLMError::InteractionError(anyhow!(
-                            "Run is incomplete: {:?}",
-                            run.incomplete_details.unwrap().reason
-                        )))
-                    }
-                    (RunStatus::Expired, _) => {
-                        return Err(LLMError::InteractionError(anyhow!("Run expired!")))
-                    }
-                    (RunStatus::RequiresAction, _) => {
-                        unreachable!("No tools should be needed")
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(SLEEP_TIME_MS)).await;
-            }
+
+            let run = self
+                .run_with_backoff(run_req)
+                .await
+                .map_err(LLMError::InteractionError)?;
+
             let msgs = {
                 let req = ListMessagesRequest {
                     run_id: Some(run.id.clone()),
@@ -283,6 +223,80 @@ impl LLM for OpenAiGPT {
             subsections.push(MarkdownSubsection(translated));
         }
         Ok(MarkdownSection(subsections))
+    }
+}
+
+impl OpenAiGPT {
+    async fn run_with_backoff(&self, req: CreateRunRequest) -> Result<RunObject, anyhow::Error> {
+        let runs_api = self.client.threads();
+        let runs_api = runs_api.runs(&self.thread.id);
+
+        let mut backoff = ExponentialBackoff::default();
+        backoff.initial_interval = std::time::Duration::from_millis(SLEEP_TIME_MS);
+
+        'outer: loop {
+            if let Some(duration) = backoff.next_backoff() {
+                if duration > backoff.initial_interval {
+                    log::warn!("Sleeping for {} seconds", duration.as_secs());
+                }
+                tokio::time::sleep(duration).await;
+            } else {
+                bail!("Rate limit exceeded and backoff exhausted");
+            }
+
+            let mut run = runs_api.create(req.clone()).await?;
+            loop {
+                run = runs_api.retrieve(&run.id).await?;
+                match run.status {
+                    RunStatus::Completed => {
+                        log::info!("Run complete");
+                        return Ok(run);
+                    }
+                    RunStatus::Queued | RunStatus::InProgress => { /* NOOP */ }
+                    RunStatus::Cancelling | RunStatus::Cancelled => {
+                        bail!("Run is cancelled!")
+                    }
+                    RunStatus::Failed => match run.last_error {
+                        Some(LastError {
+                            code: LastErrorCode::RateLimitExceeded,
+                            message,
+                        }) => {
+                            log::warn!("Hit the rate limit: {message}");
+                            continue 'outer;
+                        }
+                        Some(LastError {
+                            code: LastErrorCode::InvalidPrompt,
+                            message,
+                        }) => {
+                            bail!("Invalid prompt: {message}")
+                        }
+
+                        Some(LastError {
+                            code: LastErrorCode::ServerError,
+                            message,
+                        }) => {
+                            bail!("Server error: {message}")
+                        }
+
+                        None => {
+                            bail!("Run failed with no error")
+                        }
+                    },
+                    RunStatus::Incomplete => {
+                        bail!(
+                            "Run is incomplete: {:?}",
+                            run.incomplete_details.unwrap().reason
+                        )
+                    }
+                    RunStatus::Expired => {
+                        bail!("Run expired!")
+                    }
+                    RunStatus::RequiresAction => {
+                        unreachable!("No tools should be needed")
+                    }
+                }
+            }
+        }
     }
 }
 

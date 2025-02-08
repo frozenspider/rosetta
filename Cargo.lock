@@ -3229,6 +3229,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-openai",
+ "backoff",
  "config",
  "eframe",
  "env_logger",
