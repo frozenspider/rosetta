@@ -21,7 +21,7 @@ pub async fn translate(
         max_section_len: 6000,
     };
 
-    let llm_builder = llm::dummy::DummyLLMBuilder;
+    let llm_builder = llm::openai::OpenAiGPTBuilder::new();
 
     let generator_builder = generator::pandoc::PandocGeneratorBuilder;
 
@@ -41,6 +41,7 @@ pub struct TranslationConfig {
     pub dst_lang: String,
     pub subject: String,
     pub tone: String,
+    // TODO: Additional instructions
 }
 
 impl Default for TranslationConfig {
@@ -87,9 +88,17 @@ impl Display for ParseError {
 }
 
 #[derive(Debug)]
+pub enum LLMError {
+    ConnectionError(anyhow::Error),
+    ApiError(anyhow::Error),
+    OtherError(anyhow::Error),
+}
+
+#[derive(Debug)]
 pub enum TranslationError {
     ParseError(ParseError),
     IoError(std::io::Error),
+    LLMError(LLMError),
     OtherError(anyhow::Error),
 }
 
@@ -101,6 +110,15 @@ impl Display for TranslationError {
             }
             TranslationError::IoError(e) => {
                 write!(f, "IO error: {}", e)
+            }
+            TranslationError::LLMError(LLMError::ConnectionError(e)) => {
+                write!(f, "LLM connection error: {}", e)
+            }
+            TranslationError::LLMError(LLMError::ApiError(e)) => {
+                write!(f, "LLM API error: {}", e)
+            }
+             TranslationError::LLMError(LLMError::OtherError(e)) => {
+                write!(f, "Unexpected LLM error: {}", e)
             }
             TranslationError::OtherError(e) => {
                 write!(f, "Error: {}", e)
@@ -180,12 +198,12 @@ where
             .llm_builder
             .build(cfg)
             .await
-            .map_err(|err| TranslationError::OtherError(err))?;
+            .map_err(TranslationError::LLMError)?;
 
         let mut gen = self.generator_builder.build(output).await?;
 
         for (current, section) in input_sections.into_iter().enumerate() {
-            let translated_section = llm.translate(section).await?;
+            let translated_section = llm.translate(section).await.map_err(TranslationError::LLMError)?;
 
             gen.write(translated_section).await?;
 
