@@ -9,6 +9,9 @@ eframe = "0.31.0"
 rfd = "0.15.2"
 env_logger = "0.11.6"
 
+# Async
+tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "io-util", "fs", "macros"] }
+
 # Text processing
 pandoc = "0.8.11"
 regex = "1.11.1"

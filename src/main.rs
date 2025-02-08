@@ -3,9 +3,10 @@ use eframe::{egui, Frame};
 use rosetta::*;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
-use std::{panic, thread};
+use tokio::task::JoinHandle;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // TODO: Config
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -42,7 +43,7 @@ struct TranslationGui {
     tx: Sender<TranslationStatus>,
     rx: Receiver<TranslationStatus>,
     status: Option<TranslationStatus>,
-    translation_thread: Option<thread::JoinHandle<()>>,
+    translation_thread: Option<JoinHandle<()>>,
 }
 
 impl eframe::App for TranslationGui {
@@ -94,8 +95,7 @@ impl eframe::App for TranslationGui {
                     .on_hover_text("Browse for output file");
 
                 let mut text_edit = self.output_path.as_str();
-                let text_edit =
-                    TextEdit::singleline(&mut text_edit).desired_width(f32::INFINITY);
+                let text_edit = TextEdit::singleline(&mut text_edit).desired_width(f32::INFINITY);
                 ui.add(text_edit).labelled_by(label.id);
             });
 
@@ -167,20 +167,20 @@ impl eframe::App for TranslationGui {
                     let cfg = self.cfg.clone();
                     let tx = self.tx.clone();
 
-                    self.translation_thread = Some(thread::spawn(move || {
+                    self.translation_thread = Some(tokio::spawn(async move {
                         tx.send(TranslationStatus::Started).unwrap();
 
-                        let tx2 = tx.clone();
-                        let translation_res = panic::catch_unwind(|| {
+                        let send_progress = SendProgressThroughChannel { tx: tx.clone() };
+                        let translation_res = tokio::spawn(async move {
                             translate(
                                 Path::new(&input_path),
                                 Path::new(&output_path),
                                 cfg,
-                                Some(move |progress| {
-                                    tx2.send(TranslationStatus::Progress(progress)).unwrap();
-                                }),
+                                send_progress,
                             )
-                        });
+                            .await
+                        })
+                        .await;
                         match translation_res {
                             Ok(Ok(())) => {
                                 tx.send(TranslationStatus::Success).unwrap();
@@ -199,5 +199,15 @@ impl eframe::App for TranslationGui {
                 };
             });
         });
+    }
+}
+
+struct SendProgressThroughChannel {
+    tx: Sender<TranslationStatus>,
+}
+
+impl SendProgress for SendProgressThroughChannel {
+    fn send_progress(&self, progress: Progress) {
+        self.tx.send(TranslationStatus::Progress(progress)).expect("send");
     }
 }

@@ -4,15 +4,15 @@ use crate::ParseError;
 use anyhow::anyhow;
 use pandoc::OutputKind;
 use regex::Regex;
-use std::fs;
 use std::path::Path;
+use tokio::fs;
 
 pub struct PandocParser {
     pub max_section_len: usize,
 }
 
 impl Parser for PandocParser {
-    fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError> {
+    async fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError> {
         // if input.extension().expect("extension") != "docx" {
         //     return Err(ParseError::UnsupportedFormatError {
         //         supported_formats: vec!["docx".to_owned()],
@@ -22,15 +22,23 @@ impl Parser for PandocParser {
         let markdown = {
             let tmp_dir = tempfile::tempdir().map_err(|e| ParseError::OtherError(e.into()))?;
             let tmp_dir_path = tmp_dir.path();
-            let mut pandoc = pandoc::new();
-            let output_path = tmp_dir_path.join("rosetta.md");
-            pandoc.add_input(input);
-            pandoc.set_output(OutputKind::File(output_path.clone()));
-            pandoc
-                .execute()
-                .map_err(|e| ParseError::OtherError(e.into()))?;
+            let output_path = tmp_dir_path.join("rosetta_source.md");
+            let output_path_clone = output_path.clone();
+            let input = input.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                let mut pandoc = pandoc::new();
+                pandoc.add_input(&input);
+                pandoc.set_output(OutputKind::File(output_path_clone));
+                pandoc
+                    .execute()
+                    .map_err(|e| ParseError::OtherError(e.into()))
+            })
+            .await
+            .map_err(|e| ParseError::OtherError(e.into()))??;
 
-            fs::read_to_string(output_path).map_err(|e| ParseError::OtherError(e.into()))?
+            fs::read_to_string(output_path)
+                .await
+                .map_err(|e| ParseError::OtherError(e.into()))?
         };
 
         let sentence_break_regex =
@@ -133,10 +141,8 @@ mod tests {
         let parser = PandocParser {
             max_section_len: 60,
         };
-        let input_path = create_temp_file_with_content(
-            &dir,
-            "This is a test document.\n\nIt has two sections.",
-        );
+        let input_path =
+            create_temp_file_with_content(&dir, "This is a test document.\n\nIt has two sections.");
 
         let sections = parser.parse(&input_path).unwrap();
 

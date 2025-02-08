@@ -1,3 +1,5 @@
+#![allow(async_fn_in_trait)]
+
 pub mod generator;
 pub mod llm;
 pub mod parser;
@@ -9,11 +11,11 @@ use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 
-pub fn translate(
+pub async fn translate(
     input: &Path,
     output: &Path,
     cfg: TranslationConfig,
-    send_progress: Option<impl Fn(Progress) + Send + 'static>,
+    send_progress: impl SendProgress,
 ) -> Result<(), TranslationError> {
     let parser = parser::pandoc::PandocParser {
         max_section_len: 6000,
@@ -30,7 +32,7 @@ pub fn translate(
         send_progress,
     };
 
-    translator.translate(input, output, cfg)
+    translator.translate(input, output, cfg).await
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +55,7 @@ impl Default for TranslationConfig {
 }
 
 pub trait TranslationService {
-    fn translate(
+    async fn translate(
         &self,
         input: &Path,
         output: &Path,
@@ -121,11 +123,21 @@ pub struct Progress {
     pub total_sections: usize,
 }
 
+pub trait SendProgress: Send + Sync {
+    fn send_progress(&self, progress: Progress);
+}
+
+pub struct DummySendProgress;
+
+impl SendProgress for DummySendProgress {
+    fn send_progress(&self, _progress: Progress) {}
+}
+
 pub struct LlmTranslationService<P, LB, GB, SP> {
     parser: P,
     llm_builder: LB,
     generator_builder: GB,
-    send_progress: Option<SP>,
+    send_progress: SP,
 }
 
 impl<P, LB, GB, SP> TranslationService for LlmTranslationService<P, LB, GB, SP>
@@ -133,9 +145,9 @@ where
     P: Parser,
     LB: LLMBuilder,
     GB: GeneratorBuilder,
-    SP: Fn(Progress) + Send + 'static,
+    SP: SendProgress,
 {
-    fn translate(
+    async fn translate(
         &self,
         input: &Path,
         output: &Path,
@@ -160,32 +172,30 @@ where
         let input_sections = self
             .parser
             .parse(input)
+            .await
             .map_err(|err| TranslationError::ParseError(err))?;
         let total_sections = input_sections.len();
 
         let llm = self
             .llm_builder
             .build(cfg)
+            .await
             .map_err(|err| TranslationError::OtherError(err))?;
 
-        let mut gen = self.generator_builder.build(
-            output,
-        )?;
+        let mut gen = self.generator_builder.build(output).await?;
 
         for (current, section) in input_sections.into_iter().enumerate() {
-            let translated_section = llm.translate(section)?;
+            let translated_section = llm.translate(section).await?;
 
-            gen.write(translated_section)?;
+            gen.write(translated_section).await?;
 
-            if let Some(send_progress) = self.send_progress.as_ref() {
-                send_progress(Progress {
-                    processed_sections: current + 1,
-                    total_sections,
-                });
-            }
+            self.send_progress.send_progress(Progress {
+                processed_sections: current + 1,
+                total_sections,
+            });
         }
 
-        gen.finalize()?;
+        gen.finalize().await?;
 
         Ok(())
     }

@@ -6,9 +6,9 @@ use super::parser::MarkdownSection;
 pub trait LLMBuilder {
     type Built: LLM;
 
-    fn build(&self, cfg: TranslationConfig) -> Result<Self::Built, anyhow::Error>;
+    async fn build(&self, cfg: TranslationConfig) -> Result<Self::Built, anyhow::Error>;
 }
 
 pub trait LLM {
-    fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, TranslationError>;
+    async fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, TranslationError>;
 }

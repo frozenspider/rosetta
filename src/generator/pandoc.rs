@@ -4,17 +4,17 @@ use crate::TranslationError;
 
 use itertools::Itertools;
 use pandoc::OutputKind;
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 pub struct PandocGeneratorBuilder;
 
 impl GeneratorBuilder for PandocGeneratorBuilder {
     type Built = PandocGenrator;
 
-    fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError> {
+    async fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError> {
         let temp_dir = tempfile::tempdir().map_err(|e| TranslationError::IoError(e.into()))?;
         let temp_md_path = temp_dir.path().join("rosetta_translated.md");
         Ok(PandocGenrator {
@@ -34,11 +34,12 @@ pub struct PandocGenrator {
 }
 
 impl Generator for PandocGenrator {
-    fn write(&mut self, md: MarkdownSection) -> Result<(), TranslationError> {
+    async fn write(&mut self, md: MarkdownSection) -> Result<(), TranslationError> {
         let temp_md_file = if let Some(file) = self.temp_md_file.as_mut() {
             file
         } else {
             let file = File::create(&self.temp_md_path)
+                .await
                 .map_err(|e| TranslationError::IoError(e.into()))?;
             self.temp_md_file = Some(file);
             self.temp_md_file.as_mut().unwrap()
@@ -46,22 +47,28 @@ impl Generator for PandocGenrator {
 
         temp_md_file
             .write_all(md.0.iter().map(|ss| &ss.0).join("\n").as_bytes())
+            .await
             .map_err(|err| TranslationError::IoError(err))?;
 
         temp_md_file
             .write_all("\n\n".as_bytes())
+            .await
             .map_err(|err| TranslationError::IoError(err))
     }
 
-    fn finalize(&mut self) -> Result<(), TranslationError> {
+    async fn finalize(&mut self) -> Result<(), TranslationError> {
         self.temp_md_file = None;
-
-        let mut pandoc = pandoc::new();
-        pandoc.add_input(&self.temp_md_path);
-        pandoc.set_output(OutputKind::File(self.output_path.clone()));
-        pandoc
-            .execute()
-            .map_err(|e| TranslationError::OtherError(e.into()))?;
+        let temp_md_path = self.temp_md_path.clone();
+        let output_path = self.output_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut pandoc = pandoc::new();
+            pandoc.add_input(&temp_md_path);
+            pandoc.set_output(OutputKind::File(output_path));
+            pandoc.execute()
+        })
+        .await
+        .map_err(|e| TranslationError::OtherError(e.into()))?
+        .map_err(|e| TranslationError::OtherError(e.into()))?;
 
         Ok(())
     }
