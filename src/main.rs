@@ -1,20 +1,45 @@
+use anyhow::anyhow;
+use config::Config;
 use eframe::egui::{Button, Color32, TextBuffer, TextEdit};
 use eframe::{egui, Frame};
 use rosetta::*;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
+use log::LevelFilter;
 use tokio::task::JoinHandle;
 
 #[tokio::main]
 async fn main() {
-    // TODO: Config
+    env_logger::Builder::new()
+        .filter(None, LevelFilter::Debug)
+        .format(|buf, record| {
+            use std::io::Write;
 
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+            let timestamp = buf.timestamp_millis();
+            let level = record.level();
+            let target = record.target();
+
+            let thread = std::thread::current();
+            writeln!(
+                buf,
+                "{} {: <5} {} - {} [{}]",
+                timestamp,
+                level,
+                target,
+                record.args(),
+                thread.name().unwrap_or("<unnamed>")
+            )
+        })
+        .init();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 240.0]),
         ..Default::default()
     };
+
+    let settings = Config::builder()
+        .add_source(config::File::with_name("rosetta-settings"))
+        .build();
 
     let (tx, rx) = std::sync::mpsc::channel();
     eframe::run_native(
@@ -22,6 +47,7 @@ async fn main() {
         options,
         Box::new(|_cc| {
             Ok(Box::new(TranslationGui {
+                settings,
                 input_path: None,
                 output_path: "".to_owned(),
                 cfg: TranslationConfig::default(),
@@ -37,6 +63,7 @@ async fn main() {
 
 #[derive(Debug)]
 struct TranslationGui {
+    settings: Result<Config, config::ConfigError>,
     input_path: Option<String>,
     output_path: String,
     cfg: TranslationConfig,
@@ -50,6 +77,12 @@ impl eframe::App for TranslationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Rosetta");
+
+            if let Err(ref err) = self.settings {
+                self.status = Some(TranslationStatus::Error(TranslationError::OtherError(
+                    anyhow!("{err}")
+                )))
+            }
 
             if let Ok(status) = self.rx.try_recv() {
                 match status {
@@ -127,7 +160,9 @@ impl eframe::App for TranslationGui {
             ui.horizontal(|ui| {
                 let btn = ui
                     .add_enabled(
-                        self.input_path.is_some() && self.translation_thread.is_none(),
+                        self.input_path.is_some()
+                            && self.translation_thread.is_none()
+                            && self.settings.is_ok(),
                         Button::new("Translate"),
                     )
                     .on_hover_text("Translate the input file");
@@ -162,6 +197,7 @@ impl eframe::App for TranslationGui {
                 if btn.clicked() {
                     self.status = None;
 
+                    let settings = self.settings.as_ref().unwrap().clone();
                     let input_path = self.input_path.as_ref().unwrap().clone();
                     let output_path = self.output_path.clone();
                     let cfg = self.cfg.clone();
@@ -173,6 +209,7 @@ impl eframe::App for TranslationGui {
                         let send_progress = SendProgressThroughChannel { tx: tx.clone() };
                         let translation_res = tokio::spawn(async move {
                             translate(
+                                settings,
                                 Path::new(&input_path),
                                 Path::new(&output_path),
                                 cfg,
@@ -190,7 +227,7 @@ impl eframe::App for TranslationGui {
                             }
                             Err(_) => {
                                 tx.send(TranslationStatus::Error(TranslationError::OtherError(
-                                    anyhow::anyhow!("Crash!"),
+                                    anyhow!("Crash!"),
                                 )))
                                 .unwrap();
                             }
@@ -208,6 +245,8 @@ struct SendProgressThroughChannel {
 
 impl SendProgress for SendProgressThroughChannel {
     fn send_progress(&self, progress: Progress) {
-        self.tx.send(TranslationStatus::Progress(progress)).expect("send");
+        self.tx
+            .send(TranslationStatus::Progress(progress))
+            .expect("send");
     }
 }

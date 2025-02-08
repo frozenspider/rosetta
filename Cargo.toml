@@ -7,7 +7,10 @@ edition = "2021"
 # UI
 eframe = "0.31.0"
 rfd = "0.15.2"
+
+# Logging
 env_logger = "0.11.6"
+log = "0.4.25"
 
 # Async
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "io-util", "fs", "macros"] }
@@ -19,6 +22,11 @@ regex = "1.11.1"
 # File system
 tempfile = "3.16.0"
 
+# AI
+async-openai = "0.27.2"
+
 # Other
 anyhow = "1.0.95"
 itertools = "0.12.1"
+serde = "1.0.217"
+config = { version = "0.15.7", features = ["toml"] }

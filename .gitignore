@@ -13,6 +13,6 @@
 /target
 
 # Application
-application.conf
+rosetta-settings.toml
 
 *.log

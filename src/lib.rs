@@ -7,11 +7,13 @@ pub mod parser;
 use crate::generator::{Generator, GeneratorBuilder};
 use crate::llm::{LLMBuilder, LLM};
 use crate::parser::Parser;
+use config::Config;
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 
 pub async fn translate(
+    settings: Config,
     input: &Path,
     output: &Path,
     cfg: TranslationConfig,
@@ -21,7 +23,11 @@ pub async fn translate(
         max_section_len: 6000,
     };
 
-    let llm_builder = llm::openai::OpenAiGPTBuilder::new();
+    let api_key = settings
+        .get_string("openai.api_key")
+        .map_err(|e| TranslationError::OtherError(anyhow::Error::new(e)))?;
+
+    let llm_builder = llm::openai::OpenAiGPTBuilder::new(api_key);
 
     let generator_builder = generator::pandoc::PandocGeneratorBuilder;
 
@@ -48,7 +54,7 @@ impl Default for TranslationConfig {
     fn default() -> Self {
         TranslationConfig {
             src_lang: "English".to_owned(),
-            dst_lang: "Spanish".to_owned(),
+            dst_lang: "Russian".to_owned(),
             subject: "Unknown".to_owned(),
             tone: "formal".to_owned(),
         }
@@ -91,6 +97,7 @@ impl Display for ParseError {
 pub enum LLMError {
     ConnectionError(anyhow::Error),
     ApiError(anyhow::Error),
+    InteractionError(anyhow::Error),
     OtherError(anyhow::Error),
 }
 
@@ -117,7 +124,10 @@ impl Display for TranslationError {
             TranslationError::LLMError(LLMError::ApiError(e)) => {
                 write!(f, "LLM API error: {}", e)
             }
-             TranslationError::LLMError(LLMError::OtherError(e)) => {
+            TranslationError::LLMError(LLMError::InteractionError(e)) => {
+                write!(f, "LLM interaction error: {}", e)
+            }
+            TranslationError::LLMError(LLMError::OtherError(e)) => {
                 write!(f, "Unexpected LLM error: {}", e)
             }
             TranslationError::OtherError(e) => {
@@ -194,23 +204,28 @@ where
             .map_err(|err| TranslationError::ParseError(err))?;
         let total_sections = input_sections.len();
 
-        let llm = self
-            .llm_builder
-            .build(cfg)
-            .await
-            .map_err(TranslationError::LLMError)?;
-
         let mut gen = self.generator_builder.build(output).await?;
 
-        for (current, section) in input_sections.into_iter().enumerate() {
-            let translated_section = llm.translate(section).await.map_err(TranslationError::LLMError)?;
+        {
+            let llm = self
+                .llm_builder
+                .build(cfg)
+                .await
+                .map_err(TranslationError::LLMError)?;
 
-            gen.write(translated_section).await?;
+            for (current, section) in input_sections.into_iter().enumerate() {
+                let translated_section = llm
+                    .translate(section)
+                    .await
+                    .map_err(TranslationError::LLMError)?;
 
-            self.send_progress.send_progress(Progress {
-                processed_sections: current + 1,
-                total_sections,
-            });
+                gen.write(translated_section).await?;
+
+                self.send_progress.send_progress(Progress {
+                    processed_sections: current + 1,
+                    total_sections,
+                });
+            }
         }
 
         gen.finalize().await?;
