@@ -47,7 +47,7 @@ pub struct TranslationConfig {
     pub dst_lang: String,
     pub subject: String,
     pub tone: String,
-    // TODO: Additional instructions
+    pub additional_instructions: String,
 }
 
 impl Default for TranslationConfig {
@@ -57,6 +57,7 @@ impl Default for TranslationConfig {
             dst_lang: "Russian".to_owned(),
             subject: "Unknown".to_owned(),
             tone: "formal".to_owned(),
+            additional_instructions: "".to_owned(),
         }
     }
 }

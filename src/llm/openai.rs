@@ -52,9 +52,10 @@ Translate each of my messages, keeping in mind that they are pieces of the same 
 The subject of the source text is "{}"
 Make sure this translation is accurate and natural, preserve Markdown syntax.
 Translation tone needs to be matching the source, use {} tone when in doubt.
+{}.
 Output just the translation and nothing else.
 "#,
-            cfg.src_lang, cfg.dst_lang, cfg.subject, cfg.tone
+            cfg.src_lang, cfg.dst_lang, cfg.subject, cfg.tone, cfg.additional_instructions
         )
         .trim()
         .to_owned();

@@ -1,15 +1,17 @@
+use rosetta::*;
+
 use anyhow::anyhow;
 use config::Config;
 use eframe::egui::{Button, Color32, TextBuffer, TextEdit};
 use eframe::{egui, Frame};
-use rosetta::*;
+use log::LevelFilter;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
-use log::LevelFilter;
 use tokio::task::JoinHandle;
 
 #[tokio::main]
 async fn main() {
+    // TODO: Log window and/file
     env_logger::Builder::new()
         .filter(None, LevelFilter::Debug)
         .format(|buf, record| {
@@ -33,7 +35,7 @@ async fn main() {
         .init();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 240.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 250.0]),
         ..Default::default()
     };
 
@@ -80,7 +82,7 @@ impl eframe::App for TranslationGui {
 
             if let Err(ref err) = self.settings {
                 self.status = Some(TranslationStatus::Error(TranslationError::OtherError(
-                    anyhow!("{err}")
+                    anyhow!("{err}"),
                 )))
             }
 
@@ -155,6 +157,13 @@ impl eframe::App for TranslationGui {
                 let label = ui.label("Tone");
                 ui.text_edit_singleline(&mut self.cfg.tone)
                     .labelled_by(label.id);
+            });
+
+            ui.horizontal(|ui| {
+                let text_edit = TextEdit::multiline(&mut self.cfg.additional_instructions)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Additional instructions");
+                ui.add(text_edit)
             });
 
             ui.horizontal(|ui| {
