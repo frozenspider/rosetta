@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 #[tokio::main]
 async fn main() {
     // TODO: Log window and/file
+    // TODO: Last used file
     env_logger::Builder::new()
         .filter(None, LevelFilter::Debug)
         .format(|buf, record| {
@@ -111,7 +112,28 @@ impl eframe::App for TranslationGui {
                 }
 
                 if btn.clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                    let fd = rfd::FileDialog::new();
+
+                    let fd = match (&self.input_path, &self.settings) {
+                        (Some(prev_input_path), _) => {
+                            let prev_input_path = Path::new(prev_input_path);
+                            fd.set_directory(prev_input_path.parent().expect("parent"))
+                        }
+                        // (_, Ok(settings)) => {
+                        //     let last_input_file = settings
+                        //         .get_string("last_input_file")
+                        //         .expect("last_input_file config setting");
+                        //     if last_input_file.is_empty() {
+                        //         fd
+                        //     } else {
+                        //         let last_input_file = Path::new(&last_input_file);
+                        //         fd.set_directory(last_input_file.parent().expect("parent"))
+                        //     }
+                        // }
+                        _ => fd,
+                    };
+
+                    if let Some(path) = fd.pick_file() {
                         self.input_path = Some(path.display().to_string());
                         let new_file_name = "".to_owned()
                             + path.file_stem().unwrap().to_string_lossy().as_str()
@@ -123,6 +145,12 @@ impl eframe::App for TranslationGui {
                             .join(new_file_name)
                             .display()
                             .to_string();
+
+                        // if let Ok(settings) = &mut self.settings {
+                        //     settings
+                        //         .set("last_input_file", path.display().to_string())
+                        //         .expect("last_input_file config setting");
+                        // }
                     }
                 }
             });
