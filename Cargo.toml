@@ -31,3 +31,6 @@ itertools = "0.12.1"
 serde = "1.0.217"
 config = { version = "0.15.7", features = ["toml"] }
 backoff = "0.4.0"
+
+[patch.crates-io]
+pandoc = { git = "https://github.com/frozenspider/rust-pandoc.git" }
