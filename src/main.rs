@@ -35,7 +35,8 @@ async fn main() {
         .init();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 250.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 500.0]),
+        centered: true,
         ..Default::default()
     };
 
@@ -47,7 +48,9 @@ async fn main() {
     eframe::run_native(
         "Rosetta",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            cc.egui_ctx.set_zoom_factor(2.0);
+
             Ok(Box::new(TranslationGui {
                 settings,
                 input_path: None,
