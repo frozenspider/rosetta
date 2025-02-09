@@ -5,7 +5,6 @@ use crate::TranslationError;
 use itertools::Itertools;
 use pandoc::OutputKind;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -15,34 +14,37 @@ impl GeneratorBuilder for PandocGeneratorBuilder {
     type Built = PandocGenrator;
 
     async fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError> {
-        let temp_dir = tempfile::tempdir().map_err(|e| TranslationError::IoError(e.into()))?;
-        let temp_md_path = temp_dir.path().join("rosetta_translated.md");
+        let translated_md_path = output_path.with_extension("md");
+        if translated_md_path.exists() {
+            return Err(TranslationError::IoError(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("File already exists: {:?}", translated_md_path),
+            )));
+        }
         Ok(PandocGenrator {
             output_path: output_path.to_owned(),
-            temp_md_path,
-            temp_md_file: None,
-            _temp_dir: temp_dir,
+            translated_md_path,
+            translated_md_file: None,
         })
     }
 }
 
 pub struct PandocGenrator {
     output_path: PathBuf,
-    temp_md_path: PathBuf,
-    temp_md_file: Option<File>,
-    _temp_dir: TempDir,
+    translated_md_path: PathBuf,
+    translated_md_file: Option<File>,
 }
 
 impl Generator for PandocGenrator {
     async fn write(&mut self, md: MarkdownSection) -> Result<(), TranslationError> {
-        let temp_md_file = if let Some(file) = self.temp_md_file.as_mut() {
+        let temp_md_file = if let Some(file) = self.translated_md_file.as_mut() {
             file
         } else {
-            let file = File::create(&self.temp_md_path)
+            let file = File::create(&self.translated_md_path)
                 .await
                 .map_err(|e| TranslationError::IoError(e.into()))?;
-            self.temp_md_file = Some(file);
-            self.temp_md_file.as_mut().unwrap()
+            self.translated_md_file = Some(file);
+            self.translated_md_file.as_mut().unwrap()
         };
 
         temp_md_file
@@ -57,8 +59,8 @@ impl Generator for PandocGenrator {
     }
 
     async fn finalize(&mut self) -> Result<(), TranslationError> {
-        self.temp_md_file = None;
-        let temp_md_path = self.temp_md_path.clone();
+        self.translated_md_file = None;
+        let temp_md_path = self.translated_md_path.clone();
         let output_path = self.output_path.clone();
         tokio::task::spawn_blocking(move || {
             let mut pandoc = pandoc::new();

@@ -21,6 +21,7 @@ pub async fn translate(
 ) -> Result<(), TranslationError> {
     let parser = parser::pandoc::PandocParser {
         max_section_len: 6000,
+        skip_if_present: true
     };
 
     let api_key = settings

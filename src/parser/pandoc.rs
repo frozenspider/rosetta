@@ -9,6 +9,7 @@ use tokio::fs;
 
 pub struct PandocParser {
     pub max_section_len: usize,
+    pub skip_if_present: bool,
 }
 
 impl Parser for PandocParser {
@@ -20,21 +21,21 @@ impl Parser for PandocParser {
         // }
 
         let markdown = {
-            let tmp_dir = tempfile::tempdir().map_err(|e| ParseError::OtherError(e.into()))?;
-            let tmp_dir_path = tmp_dir.path();
-            let output_path = tmp_dir_path.join("rosetta_source.md");
-            let output_path_clone = output_path.clone();
             let input = input.to_path_buf();
-            tokio::task::spawn_blocking(move || {
-                let mut pandoc = pandoc::new();
-                pandoc.add_input(&input);
-                pandoc.set_output(OutputKind::File(output_path_clone));
-                pandoc
-                    .execute()
-                    .map_err(|e| ParseError::OtherError(e.into()))
-            })
-            .await
-            .map_err(|e| ParseError::OtherError(e.into()))??;
+            let output_path = input.with_extension("md");
+            if !output_path.exists() || !self.skip_if_present {
+                let output_path_clone = output_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut pandoc = pandoc::new();
+                    pandoc.add_input(&input);
+                    pandoc.set_output(OutputKind::File(output_path_clone));
+                    pandoc
+                        .execute()
+                        .map_err(|e| ParseError::OtherError(e.into()))
+                })
+                .await
+                .map_err(|e| ParseError::OtherError(e.into()))??;
+            }
 
             fs::read_to_string(output_path)
                 .await
@@ -94,6 +95,7 @@ mod tests {
 
         let parser = PandocParser {
             max_section_len: 100,
+            skip_if_present: false,
         };
         let input_path = create_temp_file_with_content(
             &dir,
@@ -117,6 +119,7 @@ mod tests {
 
         let parser = PandocParser {
             max_section_len: 60,
+            skip_if_present: false,
         };
         let input_path = create_temp_file_with_content(
             &dir,
@@ -140,6 +143,7 @@ mod tests {
 
         let parser = PandocParser {
             max_section_len: 60,
+            skip_if_present: false,
         };
         let input_path =
             create_temp_file_with_content(&dir, "This is a test document.\n\nIt has two sections.");
@@ -159,6 +163,7 @@ mod tests {
 
         let parser = PandocParser {
             max_section_len: 10,
+            skip_if_present: false,
         };
         let input_path =
             create_temp_file_with_content(&dir, "Thisisaverylongwordwithoutbreakpoints.");
@@ -174,6 +179,7 @@ mod tests {
 
         let parser = PandocParser {
             max_section_len: 100,
+            skip_if_present: false,
         };
         let input_path = create_temp_file_with_content(&dir, "");
 
