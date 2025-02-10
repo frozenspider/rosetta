@@ -3240,6 +3240,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
 ]
 
 [[package]]

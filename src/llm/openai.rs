@@ -16,6 +16,7 @@ use backoff::ExponentialBackoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
+use unicode_segmentation::UnicodeSegmentation;
 
 const ASSISTANT_NAME: &str = "rosetta-translator";
 const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
@@ -48,8 +49,7 @@ impl LLMBuilder for OpenAiGPTBuilder {
         let prompt = super::cfg_to_prompt(&cfg);
 
         let config = OpenAIConfig::new()
-            .with_api_key(&self.api_key)
-            .with_project_id("rosetta");
+            .with_api_key(&self.api_key);
 
         let client = Client::with_config(config);
 
@@ -141,10 +141,11 @@ impl LLM for OpenAiGPT {
         for s in section.0 {
             log::info!(r#"Sending message "{}...""#, {
                 let line = s.0.lines().next().unwrap();
-                if line.len() > 20 {
-                    &line[..20]
+                const MAX_LOG_LEN: usize = 100;
+                if line.len() > MAX_LOG_LEN {
+                    line.graphemes(true).take(MAX_LOG_LEN).collect::<String>()
                 } else {
-                    line
+                    line.to_owned()
                 }
             });
             let my_message = {
