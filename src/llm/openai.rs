@@ -15,7 +15,6 @@ use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
 use std::error::Error;
 
 const ASSISTANT_NAME: &str = "rosetta-translator";
@@ -24,17 +23,18 @@ const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 const SLEEP_TIME_MS: u64 = 2 * 1000;
 
 pub struct OpenAiGPTBuilder {
-    api_key: String,
     model: String,
+    api_key: String,
     temperature: f32,
     top_p: f32,
 }
 
+/// Builder for OpenAI-compatible LLM APIs
 impl OpenAiGPTBuilder {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(model: String, api_key: String) -> Self {
         OpenAiGPTBuilder {
+            model,
             api_key,
-            model: "gpt-4o".to_owned(),
             temperature: 1.0,
             top_p: 1.0,
         }
@@ -45,26 +45,13 @@ impl LLMBuilder for OpenAiGPTBuilder {
     type Built = OpenAiGPT;
 
     async fn build(&self, cfg: TranslationConfig) -> Result<Self::Built, LLMError> {
-        let prompt = format!(
-            r#"
-You are a professional translator from {} language to {}.
-Translate each of my messages, keeping in mind that they are pieces of the same text.
-The subject of the source text is "{}"
-Make sure this translation is accurate and natural, preserve Markdown syntax.
-Translation tone needs to be matching the source, use {} tone when in doubt.
-{}.
-Output just the translation and nothing else.
-"#,
-            cfg.src_lang, cfg.dst_lang, cfg.subject, cfg.tone, cfg.additional_instructions
-        )
-        .trim()
-        .to_owned();
+        let prompt = super::cfg_to_prompt(&cfg);
 
-        const API_KEY_VARNAME: &str = "OPENAI_API_KEY";
+        let config = OpenAIConfig::new()
+            .with_api_key(&self.api_key)
+            .with_project_id("rosetta");
 
-        env::set_var(API_KEY_VARNAME, &self.api_key);
-        let client = Client::new();
-        env::remove_var(API_KEY_VARNAME);
+        let client = Client::with_config(config);
 
         let asistants = client
             .assistants()

@@ -135,9 +135,10 @@ impl eframe::App for TranslationGui {
 
                     if let Some(path) = fd.pick_file() {
                         self.input_path = Some(path.display().to_string());
+                        let model = self.settings.as_ref().map(|s| s.get_string("openai.model")).into_iter().flatten().next();
                         let new_file_name = "".to_owned()
                             + path.file_stem().unwrap().to_string_lossy().as_str()
-                            + "_translated."
+                            + model.map_or("_translated.".to_owned(), |m| format!("_translated_{m}.")).as_str()
                             + path.extension().unwrap().to_string_lossy().as_str();
                         self.output_path = path
                             .parent()

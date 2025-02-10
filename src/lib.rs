@@ -28,7 +28,12 @@ pub async fn translate(
         .get_string("openai.api_key")
         .map_err(|e| TranslationError::OtherError(anyhow::Error::new(e)))?;
 
-    let llm_builder = llm::openai::OpenAiGPTBuilder::new(api_key);
+    let model =
+        settings
+        .get_string("openai.model")
+        .map_err(|e| TranslationError::OtherError(anyhow::Error::new(e)))?;
+
+    let llm_builder = llm::openai::OpenAiGPTBuilder::new(model, api_key);
 
     let generator_builder = generator::pandoc::PandocGeneratorBuilder;
 
