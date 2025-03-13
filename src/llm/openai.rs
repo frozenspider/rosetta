@@ -16,12 +16,14 @@ use backoff::ExponentialBackoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
-use unicode_segmentation::UnicodeSegmentation;
+use crate::utils::substr_up_to_len;
 
 const ASSISTANT_NAME: &str = "rosetta-translator";
 const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 
 const SLEEP_TIME_MS: u64 = 2 * 1000;
+
+const MAX_LOG_SRC_LEN: usize = 100;
 
 pub struct OpenAiGPTBuilder {
     model: String,
@@ -126,11 +128,14 @@ impl Drop for OpenAiGPT {
         let client = self.client.clone();
         let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
-            client
+            let cleanup_result = client
                 .threads()
                 .delete(&thread_id)
-                .await
-                .expect("thread cleanup");
+                .await;
+
+            if let Err(e) = cleanup_result {
+                log::error!("Failed to clean up thread: {:?}", e);
+            }
         });
     }
 }
@@ -139,15 +144,7 @@ impl LLM for OpenAiGPT {
     async fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, LLMError> {
         let mut subsections = vec![];
         for s in section.0 {
-            log::info!(r#"Sending message "{}...""#, {
-                let line = s.0.lines().next().unwrap();
-                const MAX_LOG_LEN: usize = 100;
-                if line.len() > MAX_LOG_LEN {
-                    line.graphemes(true).take(MAX_LOG_LEN).collect::<String>()
-                } else {
-                    line.to_owned()
-                }
-            });
+            log::info!(r#"Sending message "{}...""#, substr_up_to_len(s.0.lines().next().unwrap(), MAX_LOG_SRC_LEN));
             let my_message = {
                 self.client
                     .threads()
@@ -160,10 +157,12 @@ impl LLM for OpenAiGPT {
                     })
                     .await?
             };
+            log::info!("Message sent");
 
             let mut run_req = CreateRunRequest::default();
             run_req.assistant_id = self.assistant.id.clone();
 
+            log::info!("Getting translated message...");
             let run = self
                 .run_with_backoff(run_req)
                 .await

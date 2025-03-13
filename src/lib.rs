@@ -3,6 +3,7 @@
 pub mod generator;
 pub mod llm;
 pub mod parser;
+pub mod utils;
 
 use crate::generator::{Generator, GeneratorBuilder};
 use crate::llm::{LLMBuilder, LLM};
