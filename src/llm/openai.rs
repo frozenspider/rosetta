@@ -1,7 +1,8 @@
 use super::{LLMBuilder, LLM};
 use crate::parser::{MarkdownSection, MarkdownSubsection};
+use crate::utils::substr_up_to_len;
 use crate::{LLMError, TranslationConfig};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{
@@ -16,14 +17,15 @@ use backoff::ExponentialBackoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
-use crate::utils::substr_up_to_len;
 
 const ASSISTANT_NAME: &str = "rosetta-translator";
 const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 
-const SLEEP_TIME_MS: u64 = 2 * 1000;
+const SLEEP_TIME_MS: u64 = 3 * 1000;
 
 const MAX_LOG_SRC_LEN: usize = 100;
+
+const MAX_SEQUENTIAL_ERRORS: usize = 3;
 
 pub struct OpenAiGPTBuilder {
     model: String,
@@ -128,10 +130,7 @@ impl Drop for OpenAiGPT {
         let client = self.client.clone();
         let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
-            let cleanup_result = client
-                .threads()
-                .delete(&thread_id)
-                .await;
+            let cleanup_result = client.threads().delete(&thread_id).await;
 
             if let Err(e) = cleanup_result {
                 log::error!("Failed to clean up thread: {:?}", e);
@@ -159,8 +158,10 @@ impl LLM for OpenAiGPT {
             };
             log::info!("Message sent");
 
-            let mut run_req = CreateRunRequest::default();
-            run_req.assistant_id = self.assistant.id.clone();
+            let run_req = CreateRunRequest {
+                assistant_id: self.assistant.id.clone(),
+                ..Default::default()
+            };
 
             log::info!("Getting translated message...");
             let run = self
@@ -218,11 +219,41 @@ impl OpenAiGPT {
     async fn run_with_backoff(&self, req: CreateRunRequest) -> Result<RunObject, anyhow::Error> {
         let runs_api = self.client.threads();
         let runs_api = runs_api.runs(&self.thread.id);
+        let mut sequential_errors = 0;
 
-        let mut backoff = ExponentialBackoff::default();
-        backoff.initial_interval = std::time::Duration::from_millis(SLEEP_TIME_MS);
+        let mut backoff = ExponentialBackoff {
+            initial_interval: std::time::Duration::from_millis(SLEEP_TIME_MS),
+            ..Default::default()
+        };
 
         'outer: loop {
+            // Retry request, or bail out if we've hit the max number of sequential errors
+            macro_rules! retry_or_bail {
+                ($($t:tt)*) => {
+                    if sequential_errors >= MAX_SEQUENTIAL_ERRORS {
+                        bail!($($t)*);
+                    } else {
+                        log::warn!($($t)*);
+                        sequential_errors += 1;
+                        continue 'outer;
+                    }
+                };
+            }
+
+            // This is needed because OpenAI's wrapper library is awful at times
+            macro_rules! wrap_request {
+                ($do_req:expr, $msg:literal) => {{
+                    let result = $do_req.await;
+                    match result {
+                        Ok(v) => v,
+                        Err(OpenAIError::JSONDeserialize(e)) => {
+                            retry_or_bail!("{}, deserialization error: {e}", $msg);
+                        }
+                        e => return e.context($msg),
+                    }
+                }};
+            }
+
             if let Some(duration) = backoff.next_backoff() {
                 if duration > backoff.initial_interval {
                     log::warn!("Sleeping for {} seconds", duration.as_secs());
@@ -232,9 +263,9 @@ impl OpenAiGPT {
                 bail!("Rate limit exceeded and backoff exhausted");
             }
 
-            let mut run = runs_api.create(req.clone()).await?;
+            let mut run = wrap_request!(runs_api.create(req.clone()), "Failed to create run");
             loop {
-                run = runs_api.retrieve(&run.id).await?;
+                run =  wrap_request!(runs_api.retrieve(&run.id), "Failed to retrieve run");
                 match run.status {
                     RunStatus::Completed => {
                         log::info!("Run complete");
@@ -263,15 +294,15 @@ impl OpenAiGPT {
                             code: LastErrorCode::ServerError,
                             message,
                         }) => {
-                            bail!("Server error: {message}")
+                            retry_or_bail!("Server error: {message}")
                         }
 
                         None => {
-                            bail!("Run failed with no error")
+                            retry_or_bail!("Run failed with no error")
                         }
                     },
                     RunStatus::Incomplete => {
-                        bail!(
+                        retry_or_bail!(
                             "Run is incomplete: {:?}",
                             run.incomplete_details.unwrap().reason
                         )

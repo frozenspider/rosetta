@@ -9,6 +9,8 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[tokio::main]
 async fn main() {
     // TODO: Log window and/file
@@ -35,6 +37,14 @@ async fn main() {
         })
         .init();
 
+    // Log all errors happening via tracing crate (used by e.g. OpenAI)
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(std::io::stderr)
+            .finish(),
+    ).expect("setting default subscriber failed");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 500.0]),
         centered: true,
@@ -47,7 +57,7 @@ async fn main() {
 
     let (tx, rx) = std::sync::mpsc::channel();
     eframe::run_native(
-        "Rosetta",
+        &format!("Rosetta v{VERSION}"),
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_zoom_factor(2.0);
@@ -82,7 +92,7 @@ struct TranslationGui {
 impl eframe::App for TranslationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Rosetta");
+            ui.heading(format!("Rosetta v{VERSION}"));
 
             if let Err(ref err) = self.settings {
                 self.status = Some(TranslationStatus::Error(TranslationError::OtherError(

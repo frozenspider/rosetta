@@ -42,7 +42,7 @@ impl Generator for PandocGenrator {
         } else {
             let file = File::create(&self.translated_md_path)
                 .await
-                .map_err(|e| TranslationError::IoError(e.into()))?;
+                .map_err(TranslationError::IoError)?;
             self.translated_md_file = Some(file);
             self.translated_md_file.as_mut().unwrap()
         };
@@ -50,12 +50,12 @@ impl Generator for PandocGenrator {
         temp_md_file
             .write_all(md.0.iter().map(|ss| &ss.0).join("\n").as_bytes())
             .await
-            .map_err(|err| TranslationError::IoError(err))?;
+            .map_err(TranslationError::IoError)?;
 
         temp_md_file
             .write_all("\n\n".as_bytes())
             .await
-            .map_err(|err| TranslationError::IoError(err))
+            .map_err(TranslationError::IoError)
     }
 
     async fn finalize(&mut self) -> Result<(), TranslationError> {

@@ -203,13 +203,13 @@ where
         }
 
         fs::create_dir_all(output.parent().expect("output parent"))
-            .map_err(|err| TranslationError::IoError(err))?;
+            .map_err(TranslationError::IoError)?;
 
         let input_sections = self
             .parser
             .parse(input)
             .await
-            .map_err(|err| TranslationError::ParseError(err))?;
+            .map_err(TranslationError::ParseError)?;
         let total_sections = input_sections.len();
 
         let mut gen = self.generator_builder.build(output).await?;

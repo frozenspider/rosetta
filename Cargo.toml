@@ -1,6 +1,6 @@
 [package]
 name = "rosetta"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,8 @@ rfd = "0.15.2"
 # Logging
 env_logger = "0.11.6"
 log = "0.4.25"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
 
 # Async
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "io-util", "fs", "macros"] }
