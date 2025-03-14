@@ -30,7 +30,7 @@ fn cfg_to_prompt(cfg: &TranslationConfig) -> String {
 You are a professional translator from {} language to {}.
 Translate each of my messages, keeping in mind that they are pieces of the same text.
 The subject of the source text is "{}"
-Make sure this translation is accurate and natural, preserve Markdown syntax.
+Make sure this translation is accurate and natural, preserve Markdown syntax and HTML markup.
 Translation tone needs to be matching the source, use {} tone when in doubt.{additional_prompt}
 Output just the translation and nothing else.
 "#,

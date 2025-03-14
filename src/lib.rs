@@ -26,7 +26,7 @@ pub async fn translate(
     send_progress: impl SendProgress,
 ) -> Result<(), TranslationError> {
     let parser = parser::pandoc::PandocParser {
-        max_section_len: cfg.max_section_len,
+        max_section_len: 5000,
         skip_if_present: true
     };
 
@@ -60,7 +60,6 @@ pub struct TranslationConfig {
     pub subject: String,
     pub tone: String,
     pub additional_instructions: String,
-    pub max_section_len: usize,
 }
 
 impl Default for TranslationConfig {
@@ -71,7 +70,6 @@ impl Default for TranslationConfig {
             subject: "Unknown".to_owned(),
             tone: "formal".to_owned(),
             additional_instructions: "".to_owned(),
-            max_section_len: 5000
         }
     }
 }
