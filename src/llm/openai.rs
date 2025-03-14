@@ -1,8 +1,9 @@
-use super::{LLMBuilder, LLM};
+use super::{LLM, LLMBuilder};
 use crate::parser::{MarkdownSection, MarkdownSubsection};
 use crate::utils::substr_up_to_len;
-use crate::{LLMError, TranslationConfig, MAX_LOG_SRC_LEN};
-use anyhow::{anyhow, bail, Context};
+use crate::{LLMError, MAX_LOG_SRC_LEN, TranslationConfig};
+use anyhow::{Context, anyhow, bail};
+use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{
@@ -11,9 +12,8 @@ use async_openai::types::{
     LastError, LastErrorCode, MessageContent, MessageRole, ModifyAssistantRequest, ResponseFormat,
     RunObject, RunStatus, ThreadObject,
 };
-use async_openai::Client;
-use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
+use backoff::backoff::Backoff;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
@@ -113,11 +113,13 @@ impl LLMBuilder for OpenAiGPTBuilder {
         let thread = {
             let client = client.clone();
             run_openai_request(async move || {
-                client.threads().create(CreateThreadRequest {
-                    messages: None,
-                    tool_resources: None,
-                    metadata: None,
-                }).await
+                client
+                    .threads()
+                    .create(CreateThreadRequest {
+                        messages: None,
+                        tool_resources: None,
+                        metadata: None,
+                    }).await
             }).await?
         };
 
@@ -184,8 +186,7 @@ impl LLM for OpenAiGPT {
             log::info!("Getting translated message...");
             let run = self
                 .run_with_backoff(run_req)
-                .await
-                .map_err(LLMError::InteractionError)?;
+                .await?;
 
             let msgs = {
                 let req = ListMessagesRequest {
@@ -229,7 +230,7 @@ impl LLM for OpenAiGPT {
                     return Err(LLMError::InteractionError(anyhow!(
                         "Incorrect response type: {:?}",
                         mc
-                    )))
+                    )));
                 }
             };
             subsections.push(MarkdownSubsection(translated));
@@ -239,62 +240,78 @@ impl LLM for OpenAiGPT {
 }
 
 impl OpenAiGPT {
-    async fn run_with_backoff(&self, req: CreateRunRequest) -> Result<RunObject, anyhow::Error> {
-        let runs_api = self.client.threads();
-        let runs_api = runs_api.runs(&self.thread.id);
-        let mut sequential_errors = 0;
+    async fn run_with_backoff(&self, req: CreateRunRequest) -> Result<RunObject, LLMError> {
+        let thread_id = self.thread.id.clone();
 
+        let mut sequential_errors = 0;
         let mut backoff = ExponentialBackoff::default();
 
         'outer: loop {
-            // Retry request, or bail out if we've hit the max number of sequential errors
-            macro_rules! retry_or_bail {
+            // Shadow anyhow's bail macro with this one
+            macro_rules! bail {
+                ($($t:tt)*) => { return Err(LLMError::InteractionError(anyhow!($($t)*))) };
+            }
+
+            macro_rules! sleep {
+                () => {
+                    if let Some(duration) = backoff.next_backoff() {
+                        if duration > backoff.initial_interval {
+                            log::warn!("Sleeping for {} ms", duration.as_millis());
+                        }
+                        tokio::time::sleep(duration).await;
+                    } else {
+                        bail!("Rate limit exceeded and backoff exhausted");
+                    }
+                };
+            }
+
+            // Retry run creation and polling, or bail out if we've hit the max number of sequential errors
+            macro_rules! retry_run_or_bail {
                 ($($t:tt)*) => {
                     if sequential_errors >= MAX_SEQUENTIAL_ERRORS {
                         bail!($($t)*);
                     } else {
                         log::warn!($($t)*);
                         sequential_errors += 1;
+                        sleep!();
                         continue 'outer;
                     }
                 };
             }
 
-            // This is needed because OpenAI's wrapper library is awful at times
-            macro_rules! wrap_request {
-                ($do_req:expr, $msg:literal) => {{
-                    let result = $do_req.await;
-                    match result {
-                        Ok(v) => v,
-                        Err(OpenAIError::Reqwest(e)) => {
-                            retry_or_bail!("{}, reqwest error: {e}", $msg);
-                        }
-                        Err(OpenAIError::JSONDeserialize(e)) => {
-                            retry_or_bail!("{}, deserialization error: {e}", $msg);
-                        }
-                        e => return e.context($msg),
-                    }
-                }};
-            }
+            let run_id = {
+                let client = self.client.clone();
+                let thread_id = thread_id.clone();
+                let req = req.clone();
+                run_openai_request(async move || {
+                    let runs_api = client.threads();
+                    let runs_api = runs_api.runs(&thread_id);
+                    runs_api.create(req.clone()).await
+                }).await?.id
+            };
 
-            if let Some(duration) = backoff.next_backoff() {
-                if duration > backoff.initial_interval {
-                    log::warn!("Sleeping for {} ms", duration.as_millis());
-                }
-                tokio::time::sleep(duration).await;
-            } else {
-                bail!("Rate limit exceeded and backoff exhausted");
-            }
-
-            let mut run = wrap_request!(runs_api.create(req.clone()), "Failed to create run");
             loop {
-                run =  wrap_request!(runs_api.retrieve(&run.id), "Failed to retrieve run");
+                // Repeatedly poll the run until it's complete
+                let run = {
+                    let client = self.client.clone();
+                    let run_id = run_id.clone();
+                    let thread_id = thread_id.clone();
+                    run_openai_request(async move || {
+                        let runs_api = client.threads();
+                        let runs_api = runs_api.runs(&thread_id);
+                        runs_api.retrieve(&run_id).await
+                    }).await?
+                };
+
                 match run.status {
                     RunStatus::Completed => {
                         log::info!("Run complete");
                         return Ok(run);
                     }
-                    RunStatus::Queued | RunStatus::InProgress => { /* NOOP */ }
+                    RunStatus::Queued | RunStatus::InProgress => {
+                        sleep!();
+                        // Fallthrough to the next iteration
+                    }
                     RunStatus::Cancelling | RunStatus::Cancelled => {
                         bail!("Run is cancelled!")
                     }
@@ -304,6 +321,7 @@ impl OpenAiGPT {
                             message,
                         }) => {
                             log::warn!("Hit the rate limit: {message}");
+                            sleep!();
                             continue 'outer;
                         }
                         Some(LastError {
@@ -317,15 +335,15 @@ impl OpenAiGPT {
                             code: LastErrorCode::ServerError,
                             message,
                         }) => {
-                            retry_or_bail!("Server error: {message}")
+                            retry_run_or_bail!("Server error: {message}")
                         }
 
                         None => {
-                            retry_or_bail!("Run failed with no error")
+                            retry_run_or_bail!("Run failed with no error")
                         }
                     },
                     RunStatus::Incomplete => {
-                        retry_or_bail!(
+                        retry_run_or_bail!(
                             "Run is incomplete: {:?}",
                             run.incomplete_details.unwrap().reason
                         )
@@ -352,22 +370,20 @@ where
 
     let mut backoff = ExponentialBackoff::default();
 
-    'outer: loop {
+    loop {
         // Retry request, or bail out if we've hit the max number of sequential errors
         macro_rules! retry_or_bail {
             ($err:expr, $cxt:literal) => {
                 let err = $err;
                 if sequential_errors >= MAX_SEQUENTIAL_ERRORS {
-                    return Err(err)
-                        .context($cxt)
-                        .map_err(LLMError::InteractionError);
+                    return Err(err).context($cxt).map_err(LLMError::InteractionError);
                 } else {
-                    log::warn!("{}", err);
+                    log::warn!("{}: {}", $cxt, err);
                     sequential_errors += 1;
                     if let Some(duration) = backoff.next_backoff() {
                         log::info!("Sleeping for {} ms", duration.as_millis());
                         tokio::time::sleep(duration).await;
-                        continue 'outer;
+                        continue;
                     }
                     return Err(err)
                         .context($cxt)
