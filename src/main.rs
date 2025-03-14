@@ -223,7 +223,7 @@ impl eframe::App for TranslationGui {
                     Some(TranslationStatus::Started) => {
                         ("Starting translation...".to_owned(), None)
                     }
-                    Some(TranslationStatus::Progress(ref progress)) => (
+                    Some(TranslationStatus::Progress(progress)) => (
                         format!(
                             "{}/{} sections translated",
                             progress.processed_sections, progress.total_sections
@@ -233,7 +233,7 @@ impl eframe::App for TranslationGui {
                     Some(TranslationStatus::Success) => {
                         ("Done!".to_owned(), Some(Color32::DARK_GREEN))
                     }
-                    Some(TranslationStatus::Error(ref error)) => {
+                    Some(TranslationStatus::Error(error)) => {
                         (format!("{}", error), Some(Color32::RED))
                     }
                     None => ("".to_owned(), None),

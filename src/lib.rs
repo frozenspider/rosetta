@@ -230,7 +230,7 @@ where
 
         let mut cache = Cache::new(&output.with_extension("sqlite"), &cfg.src_lang, &cfg.dst_lang)?;
 
-        let mut gen =
+        let mut generator =
             self.generator_builder.build(output).await?;
 
         {
@@ -266,7 +266,7 @@ where
                         translated
                     };
 
-                gen.write(translated_section).await?;
+                generator.write(translated_section).await?;
 
                 self.send_progress.send_progress(Progress {
                     processed_sections: current + 1,
@@ -275,7 +275,7 @@ where
             }
         }
 
-        gen.finalize().await?;
+        generator.finalize().await?;
 
         Ok(())
     }

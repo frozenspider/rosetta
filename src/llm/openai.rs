@@ -53,10 +53,15 @@ impl LLMBuilder for OpenAiGPTBuilder {
 
         let client = Client::with_config(config);
 
-        let asistants = client
-            .assistants()
-            .list(&HashMap::<String, String>::new())
-            .await?;
+        let asistants = {
+            let client = client.clone();
+            run_openai_request(async move || {
+                client
+                    .assistants()
+                    .list(&HashMap::<String, String>::new())
+                    .await
+            }).await?
+        };
         assert!(!asistants.has_more);
 
         let assistant = asistants
@@ -79,7 +84,11 @@ impl LLMBuilder for OpenAiGPTBuilder {
                     ResponseFormat::Text,
                 )),
             };
-            client.assistants().update(&assistant.id, req).await?
+            let client = client.clone();
+            let assistant_id = assistant.id.clone();
+            run_openai_request(async move || {
+                client.assistants().update(&assistant_id, req.clone()).await
+            }).await?
         } else {
             let req = CreateAssistantRequest {
                 model: self.model.clone(),
@@ -95,16 +104,21 @@ impl LLMBuilder for OpenAiGPTBuilder {
                     ResponseFormat::Text,
                 )),
             };
-            client.assistants().create(req).await?
+            let client = client.clone();
+            run_openai_request(async move || {
+                client.assistants().create(req.clone()).await
+            }).await?
         };
 
         let thread = {
-            let req = CreateThreadRequest {
-                messages: None,
-                tool_resources: None,
-                metadata: None,
-            };
-            client.threads().create(req).await?
+            let client = client.clone();
+            run_openai_request(async move || {
+                client.threads().create(CreateThreadRequest {
+                    messages: None,
+                    tool_resources: None,
+                    metadata: None,
+                }).await
+            }).await?
         };
 
         Ok(OpenAiGPT {
@@ -126,10 +140,13 @@ impl Drop for OpenAiGPT {
         let client = self.client.clone();
         let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
-            let cleanup_result = client.threads().delete(&thread_id).await;
+            let client = client.clone();
+            let cleanup_result = run_openai_request(async move || {
+                client.threads().delete(&thread_id).await
+            }).await;
 
             if let Err(e) = cleanup_result {
-                log::error!("Failed to clean up thread: {:?}", e);
+                log::error!("Failed to clean up thread: {:#?}", e);
             }
         });
     }
@@ -141,16 +158,21 @@ impl LLM for OpenAiGPT {
         for s in section.0.iter() {
             log::info!(r#"Sending message "{}...""#, substr_up_to_len(s.0.lines().next().unwrap(), MAX_LOG_SRC_LEN));
             let my_message = {
-                self.client
-                    .threads()
-                    .messages(&self.thread.id)
-                    .create(CreateMessageRequest {
-                        role: MessageRole::User,
-                        content: CreateMessageRequestContent::Content(s.0.clone()),
-                        attachments: None,
-                        metadata: None,
-                    })
-                    .await?
+                let client = self.client.clone();
+                let s = s.clone();
+                let thread_id = self.thread.id.clone();
+                run_openai_request(async move || {
+                    client
+                        .threads()
+                        .messages(&thread_id)
+                        .create(CreateMessageRequest {
+                            role: MessageRole::User,
+                            content: CreateMessageRequestContent::Content(s.0.clone()),
+                            attachments: None,
+                            metadata: None,
+                        })
+                        .await
+                }).await?
             };
             log::info!("Message sent");
 
@@ -173,11 +195,16 @@ impl LLM for OpenAiGPT {
                     after: Some(my_message.id.clone()),
                     before: None,
                 };
-                self.client
-                    .threads()
-                    .messages(&self.thread.id)
-                    .list(&req)
-                    .await?
+
+                let client = self.client.clone();
+                let thread_id = self.thread.id.clone();
+                run_openai_request(async move || {
+                    client
+                        .threads()
+                        .messages(&thread_id)
+                        .list(&req)
+                        .await
+                }).await?
             };
             assert!(!msgs.has_more);
 
@@ -311,6 +338,55 @@ impl OpenAiGPT {
                     }
                 }
             }
+        }
+    }
+}
+
+/// This is needed because OpenAI's wrapper library is awful at times
+async fn run_openai_request<R, F>(req: F) -> Result<R, LLMError>
+where
+    R: Send + Sync + 'static,
+    F: AsyncFn() -> Result<R, OpenAIError> + 'static,
+{
+    let mut sequential_errors = 0;
+
+    let mut backoff = ExponentialBackoff::default();
+
+    'outer: loop {
+        // Retry request, or bail out if we've hit the max number of sequential errors
+        macro_rules! retry_or_bail {
+            ($err:expr, $cxt:literal) => {
+                let err = $err;
+                if sequential_errors >= MAX_SEQUENTIAL_ERRORS {
+                    return Err(err)
+                        .context($cxt)
+                        .map_err(LLMError::InteractionError);
+                } else {
+                    log::warn!("{}", err);
+                    sequential_errors += 1;
+                    if let Some(duration) = backoff.next_backoff() {
+                        log::info!("Sleeping for {} ms", duration.as_millis());
+                        tokio::time::sleep(duration).await;
+                        continue 'outer;
+                    }
+                    return Err(err)
+                        .context($cxt)
+                        .context("Rate limit exceeded and backoff exhausted")
+                        .map_err(LLMError::InteractionError);
+                }
+            };
+        }
+
+        let result = req().await;
+        match result {
+            Ok(v) => return Ok(v),
+            Err(OpenAIError::Reqwest(e)) => {
+                retry_or_bail!(e, "Reqwest error");
+            }
+            Err(OpenAIError::JSONDeserialize(e)) => {
+                retry_or_bail!(e, "Deserialization error");
+            }
+            Err(e) => return Err(LLMError::InteractionError(e.into())),
         }
     }
 }
