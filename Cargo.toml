@@ -35,7 +35,7 @@ serde = "1.0.217"
 config = { version = "0.15.7", features = ["toml"] }
 backoff = "0.4.0"
 chrono = "0.4.40"
-rusqlite = "0.34.0"
+rusqlite = { version = "0.34.0", features = ["bundled"] }
 
 [patch.crates-io]
 pandoc = { git = "https://github.com/frozenspider/rust-pandoc.git" }
