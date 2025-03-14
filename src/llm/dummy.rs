@@ -15,7 +15,7 @@ impl LLMBuilder for DummyLLMBuilder {
 pub struct DummyLLM;
 
 impl LLM for DummyLLM {
-    async fn translate(&self, _section: MarkdownSection) -> Result<MarkdownSection, LLMError> {
+    async fn translate(&self, _section: &MarkdownSection) -> Result<MarkdownSection, LLMError> {
         Ok(MarkdownSection(vec![MarkdownSubsection("Dummy output".to_owned())]))
     }
 }

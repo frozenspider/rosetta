@@ -1,5 +1,6 @@
 #![allow(async_fn_in_trait)]
 
+pub mod cache;
 pub mod generator;
 pub mod llm;
 pub mod parser;
@@ -7,11 +8,12 @@ pub mod utils;
 
 use crate::generator::{Generator, GeneratorBuilder};
 use crate::llm::{LLMBuilder, LLM};
-use crate::parser::Parser;
+use crate::parser::{MarkdownSection, MarkdownSubsection, Parser};
 use config::Config;
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
+use crate::cache::Cache;
 use crate::utils::substr_up_to_len;
 
 pub const MAX_LOG_SRC_LEN: usize = 100;
@@ -58,7 +60,6 @@ pub struct TranslationConfig {
     pub subject: String,
     pub tone: String,
     pub additional_instructions: String,
-    pub continue_translation: bool,
     pub max_section_len: usize,
 }
 
@@ -70,7 +71,6 @@ impl Default for TranslationConfig {
             subject: "Unknown".to_owned(),
             tone: "formal".to_owned(),
             additional_instructions: "".to_owned(),
-            continue_translation: false,
             max_section_len: 5000
         }
     }
@@ -120,8 +120,21 @@ pub enum LLMError {
 pub enum TranslationError {
     ParseError(ParseError),
     IoError(std::io::Error),
+    DatabaseError(rusqlite::Error),
     LLMError(LLMError),
     OtherError(anyhow::Error),
+}
+
+impl From<rusqlite::Error> for TranslationError {
+    fn from(e: rusqlite::Error) -> Self {
+        TranslationError::DatabaseError(e)
+    }
+}
+
+impl From<std::io::Error> for TranslationError {
+    fn from(e: std::io::Error) -> Self {
+        TranslationError::IoError(e)
+    }
 }
 
 impl Display for TranslationError {
@@ -132,6 +145,9 @@ impl Display for TranslationError {
             }
             TranslationError::IoError(e) => {
                 write!(f, "IO error: {}", e)
+            }
+            TranslationError::DatabaseError(e) => {
+                write!(f, "Database error: {}", e)
             }
             TranslationError::LLMError(LLMError::ConnectionError(e)) => {
                 write!(f, "LLM connection error: {}", e)
@@ -212,11 +228,12 @@ where
             .map_err(TranslationError::ParseError)?;
         let total_sections = input_sections.len();
 
-        let (mut gen, already_translated_sections) =
-            self.generator_builder.build(output, cfg.continue_translation, cfg.max_section_len).await?;
+        let mut cache = Cache::new(&output.with_extension("sqlite"), &cfg.src_lang, &cfg.dst_lang)?;
+
+        let mut gen =
+            self.generator_builder.build(output).await?;
 
         {
-            let mut already_translated_sections = already_translated_sections.into_iter();
             let llm = self
                 .llm_builder
                 .build(cfg)
@@ -224,26 +241,29 @@ where
                 .map_err(TranslationError::LLMError)?;
 
             for (current, section) in input_sections.into_iter().enumerate() {
-                let mut prev_translated_section = already_translated_sections.next();
-
-                if prev_translated_section.as_ref().is_some_and(|prev| prev.0.len() != section.0.len()) {
-                    log::info!("Section {} has incomplete translation", current);
-                    prev_translated_section = None;
-                    // Drain the iterator
-                    while let Some(_) = already_translated_sections.next() {}
-                }
+                let cached_subsections = section.0.iter()
+                    .map(|ss| cache.get(ss))
+                    .collect::<Result<Vec<Option<MarkdownSubsection>>, TranslationError>>()?;
 
                 let translated_section =
-                    if let Some(translated) = prev_translated_section {
+                    if cached_subsections.iter().all(|opt| opt.is_some()) {
+                        // Translation is fully cached
+                        let translated = MarkdownSection(cached_subsections.into_iter().map(|opt| opt.unwrap()).collect());
                         log::info!("Section {} already translated:\n >>> {}\n <<< {}", current,
                             substr_up_to_len(section.0.first().unwrap().0.lines().next().unwrap(), MAX_LOG_SRC_LEN),
                             substr_up_to_len(translated.0.first().unwrap().0.lines().next().unwrap(), MAX_LOG_SRC_LEN));
                         translated
                     } else {
-                        llm
-                            .translate(section)
+                        let translated = llm
+                            .translate(&section)
                             .await
-                            .map_err(TranslationError::LLMError)?
+                            .map_err(TranslationError::LLMError)?;
+
+                        for (src, dst) in section.0.iter().zip(translated.0.iter()) {
+                            cache.insert(src.clone(), dst.clone())?;
+                        }
+
+                        translated
                     };
 
                 gen.write(translated_section).await?;

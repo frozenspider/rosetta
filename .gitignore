@@ -13,6 +13,7 @@
 /target
 
 # Application
+_data
 rosetta-settings.toml
 
 *.log

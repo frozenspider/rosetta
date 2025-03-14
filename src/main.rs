@@ -47,7 +47,7 @@ async fn main() {
     ).expect("setting default subscriber failed");
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 540.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 500.0]),
         centered: true,
         ..Default::default()
     };
@@ -207,10 +207,6 @@ impl eframe::App for TranslationGui {
                     .desired_width(f32::INFINITY)
                     .hint_text("Additional instructions");
                 ui.add(text_edit)
-            });
-
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.cfg.continue_translation, "Continue previous translation?");
             });
 
             ui.horizontal(|ui| {

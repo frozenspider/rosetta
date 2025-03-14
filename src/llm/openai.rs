@@ -21,8 +21,6 @@ use std::error::Error;
 const ASSISTANT_NAME: &str = "rosetta-translator";
 const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 
-const SLEEP_TIME_MS: u64 = 3 * 1000;
-
 const MAX_SEQUENTIAL_ERRORS: usize = 5;
 
 pub struct OpenAiGPTBuilder {
@@ -138,9 +136,9 @@ impl Drop for OpenAiGPT {
 }
 
 impl LLM for OpenAiGPT {
-    async fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, LLMError> {
+    async fn translate(&self, section: &MarkdownSection) -> Result<MarkdownSection, LLMError> {
         let mut subsections = vec![];
-        for s in section.0 {
+        for s in section.0.iter() {
             log::info!(r#"Sending message "{}...""#, substr_up_to_len(s.0.lines().next().unwrap(), MAX_LOG_SRC_LEN));
             let my_message = {
                 self.client
@@ -148,7 +146,7 @@ impl LLM for OpenAiGPT {
                     .messages(&self.thread.id)
                     .create(CreateMessageRequest {
                         role: MessageRole::User,
-                        content: CreateMessageRequestContent::Content(s.0),
+                        content: CreateMessageRequestContent::Content(s.0.clone()),
                         attachments: None,
                         metadata: None,
                     })

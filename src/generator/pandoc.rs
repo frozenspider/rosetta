@@ -1,6 +1,5 @@
-use super::{Generator, GeneratorBuilder, AlreadyTranslated};
-use crate::parser::{MarkdownSection, Parser};
-use crate::parser::pandoc::PandocParser;
+use super::{Generator, GeneratorBuilder};
+use crate::parser::MarkdownSection;
 use crate::TranslationError;
 
 use itertools::Itertools;
@@ -14,74 +13,42 @@ pub struct PandocGeneratorBuilder;
 impl GeneratorBuilder for PandocGeneratorBuilder {
     type Built = PandocGenrator;
 
-    async fn build(
-        &self,
-        output_path: &Path,
-        continue_translation: bool,
-        max_parser_section_len: usize,
-    ) -> Result<(Self::Built, AlreadyTranslated), TranslationError> {
+    async fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError> {
         let translated_md_path = output_path.with_extension("md");
-        let already_translated_sections = if !continue_translation {
-            if translated_md_path.exists() {
-                return Err(TranslationError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::AlreadyExists,
-                    format!("File already exists: {:?}", translated_md_path),
-                )));
-            }
-            vec![]
-        } else {
-            if !translated_md_path.exists() {
-                return Err(TranslationError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("No incomplete translation to continue"),
-                )));
-            }
 
-            let parser = PandocParser { max_section_len: max_parser_section_len, skip_if_present: false };
-            parser.parse(&translated_md_path)
-                .await
-                .map_err(TranslationError::ParseError)?
-        };
+        // Created from scratch every time
+        let translated_md_file = File::create(&translated_md_path)
+            .await
+            .map_err(TranslationError::IoError)?;
 
-        Ok((PandocGenrator {
+        Ok(PandocGenrator {
             output_path: output_path.to_owned(),
             translated_md_path,
-            translated_md_file: None,
-        }, already_translated_sections))
+            translated_md_file,
+        })
     }
 }
 
 pub struct PandocGenrator {
     output_path: PathBuf,
     translated_md_path: PathBuf,
-    translated_md_file: Option<File>,
+    translated_md_file: File,
 }
 
 impl Generator for PandocGenrator {
     async fn write(&mut self, md: MarkdownSection) -> Result<(), TranslationError> {
-        let temp_md_file = if let Some(file) = self.translated_md_file.as_mut() {
-            file
-        } else {
-            let file = File::create(&self.translated_md_path)
-                .await
-                .map_err(TranslationError::IoError)?;
-            self.translated_md_file = Some(file);
-            self.translated_md_file.as_mut().unwrap()
-        };
-
-        temp_md_file
+        self.translated_md_file
             .write_all(md.0.iter().map(|ss| &ss.0).join("\n").as_bytes())
-            .await
-            .map_err(TranslationError::IoError)?;
+            .await?;
 
-        temp_md_file
+        self.translated_md_file
             .write_all("\n\n".as_bytes())
-            .await
-            .map_err(TranslationError::IoError)
+            .await?;
+
+        Ok(())
     }
 
     async fn finalize(&mut self) -> Result<(), TranslationError> {
-        self.translated_md_file = None;
         let translated_md_path = self.translated_md_path.clone();
         let output_path = self.output_path.clone();
 

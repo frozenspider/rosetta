@@ -11,7 +11,7 @@ pub trait LLMBuilder {
 }
 
 pub trait LLM {
-    async fn translate(&self, section: MarkdownSection) -> Result<MarkdownSection, LLMError>;
+    async fn translate(&self, section: &MarkdownSection) -> Result<MarkdownSection, LLMError>;
 }
 
 fn cfg_to_prompt(cfg: &TranslationConfig) -> String {

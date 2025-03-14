@@ -6,7 +6,7 @@ use super::ParseError;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MarkdownSection(pub Vec<MarkdownSubsection>);
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct MarkdownSubsection(pub String);
 
 pub trait Parser {
