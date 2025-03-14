@@ -321,6 +321,25 @@ impl OpenAiGPT {
                             message,
                         }) => {
                             log::warn!("Hit the rate limit: {message}");
+
+                            // Message looks like this:
+                            // Rate limit reached for gpt-4o in organization org-Z0EwW949tS7WYT6MNWC6YBii on tokens per min (TPM): Limit 30000, Used 4308, Requested 26233. Please try again in 1.082s. Visit https://platform.openai.com/account/rate-limits to learn more.
+                            let limit = message
+                                .split("Limit ")
+                                .nth(1)
+                                .and_then(|s| s.split(',').next())
+                                .and_then(|s| s.parse::<u32>().ok());
+                            let requested = message
+                                .split("Requested ")
+                                .nth(1)
+                                .and_then(|s| s.split('.').next())
+                                .and_then(|s| s.parse::<u32>().ok());
+                            if let (Some(limit), Some(requested)) = (limit, requested) {
+                                if requested > limit {
+                                    retry_run_or_bail!("Requested more tokens than the rate limit allows");
+                                }
+                            }
+
                             sleep!();
                             continue 'outer;
                         }
