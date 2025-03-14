@@ -101,7 +101,7 @@ impl eframe::App for TranslationGui {
                 )))
             }
 
-            if let Ok(status) = self.rx.try_recv() {
+            while let Ok(status) = self.rx.try_recv() {
                 match status {
                     TranslationStatus::Success | TranslationStatus::Error(_) => {
                         self.translation_thread = None;
