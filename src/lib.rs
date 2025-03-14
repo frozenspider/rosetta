@@ -114,6 +114,25 @@ pub enum LLMError {
     OtherError(anyhow::Error),
 }
 
+impl Display for LLMError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LLMError::ConnectionError(e) => {
+                write!(f, "LLM connection error: {:#}", e)
+            }
+            LLMError::ApiError(e) => {
+                write!(f, "LLM API error: {:#}", e)
+            }
+            LLMError::InteractionError(e) => {
+                write!(f, "LLM interaction error: {:#}", e)
+            }
+            LLMError::OtherError(e) => {
+                write!(f, "Unexpected LLM error: {:#}", e)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum TranslationError {
     ParseError(ParseError),
@@ -147,20 +166,11 @@ impl Display for TranslationError {
             TranslationError::DatabaseError(e) => {
                 write!(f, "Database error: {}", e)
             }
-            TranslationError::LLMError(LLMError::ConnectionError(e)) => {
-                write!(f, "LLM connection error: {}", e)
-            }
-            TranslationError::LLMError(LLMError::ApiError(e)) => {
-                write!(f, "LLM API error: {}", e)
-            }
-            TranslationError::LLMError(LLMError::InteractionError(e)) => {
-                write!(f, "LLM interaction error: {}", e)
-            }
-            TranslationError::LLMError(LLMError::OtherError(e)) => {
-                write!(f, "Unexpected LLM error: {}", e)
+            TranslationError::LLMError(e) => {
+                write!(f, "{}", e)
             }
             TranslationError::OtherError(e) => {
-                write!(f, "Error: {}", e)
+                write!(f, "Error: {:#}", e)
             }
         }
     }

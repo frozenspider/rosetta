@@ -148,7 +148,7 @@ impl Drop for OpenAiGPT {
             }).await;
 
             if let Err(e) = cleanup_result {
-                log::error!("Failed to clean up thread: {:#?}", e);
+                log::error!("Failed to clean up thread: {}", e);
             }
         });
     }
