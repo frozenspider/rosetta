@@ -21,7 +21,7 @@ pub async fn translate(
     send_progress: impl SendProgress,
 ) -> Result<(), TranslationError> {
     let parser = parser::pandoc::PandocParser {
-        max_section_len: 5000,
+        max_section_len: cfg.max_section_len,
         skip_if_present: true
     };
 
@@ -55,6 +55,8 @@ pub struct TranslationConfig {
     pub subject: String,
     pub tone: String,
     pub additional_instructions: String,
+    pub continue_translation: bool,
+    pub max_section_len: usize,
 }
 
 impl Default for TranslationConfig {
@@ -65,6 +67,8 @@ impl Default for TranslationConfig {
             subject: "Unknown".to_owned(),
             tone: "formal".to_owned(),
             additional_instructions: "".to_owned(),
+            continue_translation: false,
+            max_section_len: 5000
         }
     }
 }
@@ -195,13 +199,6 @@ where
                 format!("File not found: {:?}", input),
             )));
         }
-        if output.exists() {
-            return Err(TranslationError::IoError(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("File already exists: {:?}", output),
-            )));
-        }
-
         fs::create_dir_all(output.parent().expect("output parent"))
             .map_err(TranslationError::IoError)?;
 
@@ -212,9 +209,11 @@ where
             .map_err(TranslationError::ParseError)?;
         let total_sections = input_sections.len();
 
-        let mut gen = self.generator_builder.build(output).await?;
+        let (mut gen, already_translated_sections) =
+            self.generator_builder.build(output, cfg.continue_translation, cfg.max_section_len).await?;
 
         {
+            let mut already_translated_sections = already_translated_sections.into_iter();
             let llm = self
                 .llm_builder
                 .build(cfg)
@@ -222,10 +221,25 @@ where
                 .map_err(TranslationError::LLMError)?;
 
             for (current, section) in input_sections.into_iter().enumerate() {
-                let translated_section = llm
-                    .translate(section)
-                    .await
-                    .map_err(TranslationError::LLMError)?;
+                let mut prev_translated_section = already_translated_sections.next();
+
+                if prev_translated_section.as_ref().is_some_and(|prev| prev.0.len() != section.0.len()) {
+                    log::info!("Section {} has incomplete translation", current);
+                    prev_translated_section = None;
+                    // Drain the iterator
+                    while let Some(_) = already_translated_sections.next() {}
+                }
+
+                let translated_section =
+                    if let Some(prev_translated_section) = prev_translated_section {
+                        log::info!("Section {} already translated", current);
+                        prev_translated_section
+                    } else {
+                        llm
+                            .translate(section)
+                            .await
+                            .map_err(TranslationError::LLMError)?
+                    };
 
                 gen.write(translated_section).await?;
 

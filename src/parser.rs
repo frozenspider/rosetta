@@ -10,5 +10,7 @@ pub struct MarkdownSection(pub Vec<MarkdownSubsection>);
 pub struct MarkdownSubsection(pub String);
 
 pub trait Parser {
+    fn max_section_len(&self) -> usize;
+
     async fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError>;
 }

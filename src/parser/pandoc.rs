@@ -13,13 +13,11 @@ pub struct PandocParser {
 }
 
 impl Parser for PandocParser {
-    async fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError> {
-        // if input.extension().expect("extension") != "docx" {
-        //     return Err(ParseError::UnsupportedFormatError {
-        //         supported_formats: vec!["docx".to_owned()],
-        //     });
-        // }
+    fn max_section_len(&self) -> usize {
+        self.max_section_len
+    }
 
+    async fn parse(&self, input: &Path) -> Result<Vec<MarkdownSection>, ParseError> {
         let markdown = {
             let input = input.to_path_buf();
             let output_path = input.with_extension("md");

@@ -4,10 +4,17 @@ use crate::parser::MarkdownSection;
 use crate::TranslationError;
 use std::path::Path;
 
+pub type AlreadyTranslated = Vec<MarkdownSection>;
+
 pub trait GeneratorBuilder {
     type Built: Generator;
 
-    async fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError>;
+    async fn build(
+        &self,
+        output_path: &Path,
+        continue_translation: bool,
+        max_parser_section_len: usize,
+    ) -> Result<(Self::Built, AlreadyTranslated), TranslationError>;
 }
 
 pub trait Generator {

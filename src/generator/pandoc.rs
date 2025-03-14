@@ -1,5 +1,6 @@
-use super::{Generator, GeneratorBuilder};
-use crate::parser::MarkdownSection;
+use super::{Generator, GeneratorBuilder, AlreadyTranslated};
+use crate::parser::{MarkdownSection, Parser};
+use crate::parser::pandoc::PandocParser;
 use crate::TranslationError;
 
 use itertools::Itertools;
@@ -13,19 +14,40 @@ pub struct PandocGeneratorBuilder;
 impl GeneratorBuilder for PandocGeneratorBuilder {
     type Built = PandocGenrator;
 
-    async fn build(&self, output_path: &Path) -> Result<Self::Built, TranslationError> {
+    async fn build(
+        &self,
+        output_path: &Path,
+        continue_translation: bool,
+        max_parser_section_len: usize,
+    ) -> Result<(Self::Built, AlreadyTranslated), TranslationError> {
         let translated_md_path = output_path.with_extension("md");
-        if translated_md_path.exists() {
-            return Err(TranslationError::IoError(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("File already exists: {:?}", translated_md_path),
-            )));
-        }
-        Ok(PandocGenrator {
+        let already_translated_sections = if !continue_translation {
+            if translated_md_path.exists() {
+                return Err(TranslationError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("File already exists: {:?}", translated_md_path),
+                )));
+            }
+            vec![]
+        } else {
+            if !translated_md_path.exists() {
+                return Err(TranslationError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("No incomplete translation to continue"),
+                )));
+            }
+
+            let parser = PandocParser { max_section_len: max_parser_section_len, skip_if_present: false };
+            parser.parse(&translated_md_path)
+                .await
+                .map_err(TranslationError::ParseError)?
+        };
+
+        Ok((PandocGenrator {
             output_path: output_path.to_owned(),
             translated_md_path,
             translated_md_file: None,
-        })
+        }, already_translated_sections))
     }
 }
 
