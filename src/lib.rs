@@ -26,7 +26,7 @@ pub async fn translate(
     send_progress: impl SendProgress,
 ) -> Result<(), TranslationError> {
     let parser = parser::pandoc::PandocParser {
-        max_section_len: 5000,
+        max_section_len: 4000,
         skip_if_present: true
     };
 
