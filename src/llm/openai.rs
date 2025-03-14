@@ -1,7 +1,7 @@
 use super::{LLMBuilder, LLM};
 use crate::parser::{MarkdownSection, MarkdownSubsection};
 use crate::utils::substr_up_to_len;
-use crate::{LLMError, TranslationConfig};
+use crate::{LLMError, TranslationConfig, MAX_LOG_SRC_LEN};
 use anyhow::{anyhow, bail, Context};
 use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
@@ -23,9 +23,7 @@ const ASSISTANT_DESC: &str = "A Rosetta translation assistant";
 
 const SLEEP_TIME_MS: u64 = 3 * 1000;
 
-const MAX_LOG_SRC_LEN: usize = 100;
-
-const MAX_SEQUENTIAL_ERRORS: usize = 3;
+const MAX_SEQUENTIAL_ERRORS: usize = 5;
 
 pub struct OpenAiGPTBuilder {
     model: String,
@@ -221,10 +219,7 @@ impl OpenAiGPT {
         let runs_api = runs_api.runs(&self.thread.id);
         let mut sequential_errors = 0;
 
-        let mut backoff = ExponentialBackoff {
-            initial_interval: std::time::Duration::from_millis(SLEEP_TIME_MS),
-            ..Default::default()
-        };
+        let mut backoff = ExponentialBackoff::default();
 
         'outer: loop {
             // Retry request, or bail out if we've hit the max number of sequential errors
@@ -246,6 +241,9 @@ impl OpenAiGPT {
                     let result = $do_req.await;
                     match result {
                         Ok(v) => v,
+                        Err(OpenAIError::Reqwest(e)) => {
+                            retry_or_bail!("{}, reqwest error: {e}", $msg);
+                        }
                         Err(OpenAIError::JSONDeserialize(e)) => {
                             retry_or_bail!("{}, deserialization error: {e}", $msg);
                         }
@@ -256,7 +254,7 @@ impl OpenAiGPT {
 
             if let Some(duration) = backoff.next_backoff() {
                 if duration > backoff.initial_interval {
-                    log::warn!("Sleeping for {} seconds", duration.as_secs());
+                    log::warn!("Sleeping for {} ms", duration.as_millis());
                 }
                 tokio::time::sleep(duration).await;
             } else {

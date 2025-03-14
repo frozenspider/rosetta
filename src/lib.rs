@@ -12,6 +12,9 @@ use config::Config;
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
+use crate::utils::substr_up_to_len;
+
+pub const MAX_LOG_SRC_LEN: usize = 100;
 
 pub async fn translate(
     settings: Config,
@@ -231,9 +234,11 @@ where
                 }
 
                 let translated_section =
-                    if let Some(prev_translated_section) = prev_translated_section {
-                        log::info!("Section {} already translated", current);
-                        prev_translated_section
+                    if let Some(translated) = prev_translated_section {
+                        log::info!("Section {} already translated:\n >>> {}\n <<< {}", current,
+                            substr_up_to_len(section.0.first().unwrap().0.lines().next().unwrap(), MAX_LOG_SRC_LEN),
+                            substr_up_to_len(translated.0.first().unwrap().0.lines().next().unwrap(), MAX_LOG_SRC_LEN));
+                        translated
                     } else {
                         llm
                             .translate(section)

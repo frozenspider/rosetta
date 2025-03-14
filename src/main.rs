@@ -7,6 +7,7 @@ use eframe::{egui, Frame};
 use log::LevelFilter;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
+use chrono::Local;
 use tokio::task::JoinHandle;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -20,7 +21,7 @@ async fn main() {
         .format(|buf, record| {
             use std::io::Write;
 
-            let timestamp = buf.timestamp_millis();
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let level = record.level();
             let target = record.target();
 
